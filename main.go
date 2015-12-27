@@ -20,7 +20,16 @@
 
 package main
 
+import (
+	"flag"
+)
+
 func main() {
+	var sniffConfig string
+
+	flag.StringVar(&sniffConfig, "config", "sniff.json", "Config")
+	flag.Parse()
+
 	config, err := LoadConfig("/home/paultag/sniff.json")
 	if err != nil {
 		panic(err)
