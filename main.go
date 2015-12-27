@@ -30,7 +30,7 @@ func main() {
 	flag.StringVar(&sniffConfig, "config", "sniff.json", "Config")
 	flag.Parse()
 
-	config, err := LoadConfig("/home/paultag/sniff.json")
+	config, err := LoadConfig(sniffConfig)
 	if err != nil {
 		panic(err)
 	}
