@@ -4,9 +4,10 @@ import ()
 
 var TLSHeaderLengh = 5
 
-/*
- *
- */
+/* This function is basically all most folks want to invoke out of this
+ * jumble of bits. This will take an incoming TLS Client Hello (including
+ * all the fuzzy bits at the beginning of it - fresh out of the socket) and
+ * go ahead and give us the SNI Name they want. */
 func GetHostname(data []byte) []byte {
 	extensions := GetExtensionBlock(data)
 	sn := GetSNBlock(extensions)
@@ -14,6 +15,8 @@ func GetHostname(data []byte) []byte {
 	return sni
 }
 
+/* Given a Server Name TLS Extension block, parse out and return the SNI
+ * (Server Name Indication) payload */
 func GetSNIBlock(data []byte) []byte {
 	index := 0
 
@@ -33,7 +36,7 @@ func GetSNIBlock(data []byte) []byte {
 	return []byte{}
 }
 
-/* Given an Extensions block, go ahead and find the SN block */
+/* Given an TLS Extensions data block, go ahead and find the SN block */
 func GetSNBlock(data []byte) []byte {
 	index := 0
 	extensionLength := int((data[index] << 8) + data[index+1])
@@ -56,7 +59,7 @@ func GetSNBlock(data []byte) []byte {
 	return []byte{}
 }
 
-/* */
+/* Given a raw TLS Client Hello, go ahead and find all the Extensions */
 func GetExtensionBlock(data []byte) []byte {
 	/*   data[0]           - content type
 	 *   data[1], data[2]  - major/minor version

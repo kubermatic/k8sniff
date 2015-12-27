@@ -8,7 +8,7 @@ import (
 )
 
 func main() {
-	fd, err := os.Open("/home/paultag/client.start.2")
+	fd, err := os.Open("/home/paultag/client.start.1")
 	if err != nil {
 		panic(err)
 	}
@@ -18,5 +18,5 @@ func main() {
 		panic(err)
 	}
 	data = parser.GetHostname(data)
-	fmt.Printf("%x\n", data)
+	fmt.Printf("%s\n", data)
 }
