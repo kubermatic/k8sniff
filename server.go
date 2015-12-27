@@ -93,6 +93,8 @@ func (s *Proxy) Handle(conn net.Conn) {
 		return
 	}
 
+	log.Printf("Parsed Hostname: %s\n", hostname)
+
 	clientConn, err := net.Dial("tcp", fmt.Sprintf(
 		"%s:%d", proxy.Host, proxy.Port,
 	))
