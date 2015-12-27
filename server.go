@@ -20,13 +20,46 @@
 
 package main
 
-func main() {
-	config, err := LoadConfig("/home/paultag/sniff.json")
+import (
+	"fmt"
+	"log"
+	"net"
+
+	"pault.ag/go/sniff/parser"
+)
+
+func (c *Config) Serve() error {
+	fmt.Printf("%s\n", c)
+	listener, err := net.Listen("tcp", fmt.Sprintf(
+		"%s:%d", c.Bind.Host, c.Bind.Port,
+	))
 	if err != nil {
-		panic(err)
+		return err
+	}
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			return err
+		}
+		go Handle(conn)
+	}
+}
+
+func Handle(conn net.Conn) {
+	defer conn.Close()
+	data := make([]byte, 4096)
+
+	_, err := conn.Read(data)
+	if err != nil {
+		log.Printf("Error: %s", err)
 	}
 
-	panic(config.Serve())
+	hostname, err := parser.GetHostname(data)
+	if err != nil {
+		log.Printf("Error: %s", err)
+	}
+
+	log.Printf("%s\n", hostname)
 }
 
 // vim: foldmethod=marker
