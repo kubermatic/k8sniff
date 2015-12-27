@@ -17,6 +17,9 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	data = parser.GetHostname(data)
-	fmt.Printf("%s\n", data)
+
+	for i := 0; i < len(data); i++ {
+		name, err := parser.GetHostname(data[:i])
+		fmt.Printf("%s %s\n", name, err)
+	}
 }
