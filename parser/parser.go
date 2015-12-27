@@ -10,20 +10,20 @@ var TLSHeaderLengh = 5
  * jumble of bits. This will take an incoming TLS Client Hello (including
  * all the fuzzy bits at the beginning of it - fresh out of the socket) and
  * go ahead and give us the SNI Name they want. */
-func GetHostname(data []byte) ([]byte, error) {
+func GetHostname(data []byte) (string, error) {
 	extensions, err := GetExtensionBlock(data)
 	if err != nil {
-		return []byte{}, err
+		return "", err
 	}
 	sn, err := GetSNBlock(extensions)
 	if err != nil {
-		return []byte{}, err
+		return "", err
 	}
 	sni, err := GetSNIBlock(sn)
 	if err != nil {
-		return []byte{}, err
+		return "", err
 	}
-	return sni, nil
+	return string(sni), nil
 }
 
 /* Given a Server Name TLS Extension block, parse out and return the SNI
