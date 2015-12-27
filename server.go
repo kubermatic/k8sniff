@@ -22,44 +22,117 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"net"
 
 	"pault.ag/go/sniff/parser"
 )
 
+type Proxy struct {
+	ServerMap map[string]Server
+	Default   *Server
+}
+
+func (c *Proxy) Get(host string) *Server {
+	if server, ok := c.ServerMap[host]; ok {
+		return &server
+	}
+	return c.Default
+}
+
+func (c *Config) CreateProxy() Proxy {
+	ret := Proxy{ServerMap: map[string]Server{}}
+	for _, server := range c.Servers {
+		for _, hostname := range server.Names {
+			ret.ServerMap[hostname] = server
+		}
+	}
+	for _, server := range c.Servers {
+		if server.Default {
+			ret.Default = &server
+			break
+		}
+	}
+	return ret
+}
+
 func (c *Config) Serve() error {
-	fmt.Printf("%s\n", c)
 	listener, err := net.Listen("tcp", fmt.Sprintf(
 		"%s:%d", c.Bind.Host, c.Bind.Port,
 	))
 	if err != nil {
 		return err
 	}
+
+	server := c.CreateProxy()
+
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			return err
 		}
-		go Handle(conn)
+		go server.Handle(conn)
 	}
 }
 
-func Handle(conn net.Conn) {
-	defer conn.Close()
+func (s *Proxy) Handle(conn net.Conn) {
 	data := make([]byte, 4096)
 
-	_, err := conn.Read(data)
+	length, err := conn.Read(data)
 	if err != nil {
 		log.Printf("Error: %s", err)
 	}
 
-	hostname, err := parser.GetHostname(data)
-	if err != nil {
-		log.Printf("Error: %s", err)
+	hostname, _ := parser.GetHostname(data[:])
+	/* So, a failure in parsing just means we default it through */
+	proxy := s.Get(hostname)
+	if proxy == nil {
+		log.Printf("No default proxy")
+		conn.Close()
+		return
 	}
 
-	log.Printf("%s\n", hostname)
+	clientConn, err := net.Dial("tcp", fmt.Sprintf(
+		"%s:%d", proxy.Host, proxy.Port,
+	))
+	if err != nil {
+		log.Printf("Error: %s", err)
+		conn.Close()
+		return
+	}
+	n, err := clientConn.Write(data[:length])
+	log.Printf("Wrote %d bytes\n", n)
+	if err != nil {
+		log.Printf("Error: %s", err)
+		conn.Close()
+		clientConn.Close()
+	}
+	Copycat(clientConn, conn)
+}
+
+func Copycat(client, server net.Conn) {
+	defer client.Close()
+	defer server.Close()
+
+	log.Printf("Entering copy routine\n")
+
+	doCopy := func(s, c net.Conn, cancel chan<- bool) {
+		io.Copy(s, c)
+		cancel <- true
+	}
+
+	cancel := make(chan bool, 2)
+
+	go doCopy(server, client, cancel)
+	go doCopy(client, server, cancel)
+
+	select {
+	case <-cancel:
+		log.Printf("Disconnect\n")
+		return
+	}
+
 }
 
 // vim: foldmethod=marker

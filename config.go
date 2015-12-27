@@ -42,18 +42,6 @@ type Server struct {
 	Port    int
 }
 
-func (c *Config) GetHostMap() map[string]Server {
-	ret := map[string]Server{}
-
-	for _, server := range c.Servers {
-		for _, hostname := range server.Names {
-			ret[hostname] = server
-		}
-	}
-
-	return ret
-}
-
 func LoadConfig(path string) (*Config, error) {
 	fd, err := os.Open(path)
 	if err != nil {
