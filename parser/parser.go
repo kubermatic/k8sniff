@@ -24,7 +24,7 @@ import (
 	"fmt"
 )
 
-var TLSHeaderLengh = 5
+var TLSHeaderLength = 5
 
 /* This function is basically all most folks want to invoke out of this
  * jumble of bits. This will take an incoming TLS Client Hello (including
