@@ -110,7 +110,7 @@ func GetExtensionBlock(data []byte) ([]byte, error) {
 	 *   data[...38+5]     - start of SessionID (length bit)
 	 *   data[38+5]        - length of SessionID
 	 */
-	var index = TLSHeaderLengh + 38
+	var index = TLSHeaderLength + 38
 
 	if len(data) <= index+1 {
 		return []byte{}, fmt.Errorf("Not enough bits to be a Client Hello")
