@@ -6,6 +6,7 @@
     "servers": [
         {
             "default": false,
+            "regexp": false,
             "host": "97.107.130.79",
             "names": [
                 "pault.ag",

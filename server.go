@@ -25,36 +25,55 @@ import (
 	"io"
 	"log"
 	"net"
+	"regexp"
 
 	"pault.ag/go/sniff/parser"
 )
 
+type ServerAndRegexp struct {
+	Server *Server
+	Regexp *regexp.Regexp
+}
+
 type Proxy struct {
-	ServerMap map[string]Server
-	Default   *Server
+	ServerList []ServerAndRegexp
+	Default    *Server
 }
 
 func (c *Proxy) Get(host string) *Server {
-	if server, ok := c.ServerMap[host]; ok {
-		return &server
+	for _, tuple := range c.ServerList {
+		if tuple.Regexp.MatchString(host) {
+			return tuple.Server
+		}
 	}
 	return c.Default
 }
 
-func (c *Config) CreateProxy() Proxy {
-	ret := Proxy{ServerMap: map[string]Server{}}
-	for _, server := range c.Servers {
+func (c *Config) CreateProxy() (Proxy, error) {
+	var ret Proxy
+	for i, server := range c.Servers {
 		for _, hostname := range server.Names {
-			ret.ServerMap[hostname] = server
+			var host_regexp *regexp.Regexp
+			var err error
+			if server.Regexp {
+				host_regexp, err = regexp.Compile(hostname)
+			} else {
+				host_regexp, err = regexp.Compile("^\\Q" + hostname + "\\E$")
+			}
+			if err != nil {
+				return Proxy{}, err
+			}
+			tuple := ServerAndRegexp{&c.Servers[i], host_regexp}
+			ret.ServerList = append(ret.ServerList, tuple)
 		}
 	}
-	for _, server := range c.Servers {
+	for i, server := range c.Servers {
 		if server.Default {
-			ret.Default = &server
+			ret.Default = &c.Servers[i]
 			break
 		}
 	}
-	return ret
+	return ret, nil
 }
 
 func (c *Config) Serve() error {
@@ -65,7 +84,10 @@ func (c *Config) Serve() error {
 		return err
 	}
 
-	server := c.CreateProxy()
+	server, err := c.CreateProxy()
+	if err != nil {
+		return err
+	}
 
 	for {
 		conn, err := listener.Accept()
@@ -84,16 +106,27 @@ func (s *Proxy) Handle(conn net.Conn) {
 		log.Printf("Error: %s", err)
 	}
 
-	hostname, _ := parser.GetHostname(data[:])
-	/* So, a failure in parsing just means we default it through */
-	proxy := s.Get(hostname)
-	if proxy == nil {
-		log.Printf("No default proxy")
-		conn.Close()
-		return
-	}
+	var proxy *Server
+	hostname, hostname_err := parser.GetHostname(data[:])
+	if hostname_err == nil {
+		log.Printf("Parsed hostname: %s\n", hostname)
 
-	log.Printf("Parsed Hostname: %s\n", hostname)
+		proxy = s.Get(hostname)
+		if proxy == nil {
+			log.Printf("No proxy matched %s", hostname)
+			conn.Close()
+			return
+		}
+	} else {
+		log.Printf("Parsed request without hostname")
+
+		proxy = s.Default
+		if proxy == nil {
+			log.Printf("No default proxy")
+			conn.Close()
+			return
+		}
+	}
 
 	clientConn, err := net.Dial("tcp", fmt.Sprintf(
 		"%s:%d", proxy.Host, proxy.Port,

@@ -17,6 +17,7 @@ sniff config
     "servers": [
         {
             "default": false,
+            "regexp": false,
             "host": "97.107.130.79",
             "names": [
                 "pault.ag",
@@ -34,6 +35,12 @@ nothing matches this, the socket will be closed.
 
 Changing default to true would send any unmatched hosts (or TLS / SSL connections
 without SNI) to that host.
+
+By default, the requested domain name is compared literally with the strings
+inside `names`. If `regexp` is true, then the names are interpreted as regular
+expressions. Each server and name will be checked in the order they appear in
+the file, stopping with the first match. If there is no match, then the
+request is sent to the first server with `default` set.
 
 using the parser
 ----------------

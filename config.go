@@ -37,6 +37,7 @@ type Bind struct {
 
 type Server struct {
 	Default bool
+	Regexp  bool
 	Host    string
 	Names   []string
 	Port    int
