@@ -32,7 +32,7 @@ var TLSHeaderLength = 5
  * go ahead and give us the SNI Name they want. */
 func GetHostname(data []byte) (string, error) {
 	if len(data) == 0 || data[0] != 0x16 {
-		return "", fmt.Errorf("Doens't look like a TLS Client Hello")
+		return "", fmt.Errorf("Doesn't look like a TLS Client Hello")
 	}
 
 	extensions, err := GetExtensionBlock(data)
@@ -73,12 +73,12 @@ func GetSNIBlock(data []byte) ([]byte, error) {
 	)
 }
 
-/* Given an TLS Extensions data block, go ahead and find the SN block */
+/* Given a TLS Extensions data block, go ahead and find the SN block */
 func GetSNBlock(data []byte) ([]byte, error) {
 	index := 0
 
 	if len(data) < 2 {
-		return []byte{}, fmt.Errorf("Not enough bytes to be a SN block")
+		return []byte{}, fmt.Errorf("Not enough bytes to be an SN block")
 	}
 
 	extensionLength := int((data[index] << 8) + data[index+1])
