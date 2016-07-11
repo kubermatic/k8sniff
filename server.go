@@ -58,7 +58,7 @@ func (c *Config) CreateProxy() (Proxy, error) {
 			if server.Regexp {
 				host_regexp, err = regexp.Compile(hostname)
 			} else {
-				host_regexp, err = regexp.Compile("^\\Q" + hostname + "\\E$")
+				host_regexp, err = regexp.Compile("^" + regexp.QuoteMeta(hostname) + "$")
 			}
 			if err != nil {
 				return Proxy{}, err
