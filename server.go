@@ -26,6 +26,7 @@ import (
 	"log"
 	"net"
 	"regexp"
+	"sync"
 
 	"github.com/paultag/sniff/parser"
 )
@@ -36,11 +37,15 @@ type ServerAndRegexp struct {
 }
 
 type Proxy struct {
+	Lock       sync.RWMutex
 	ServerList []ServerAndRegexp
 	Default    *Server
 }
 
 func (c *Proxy) Get(host string) *Server {
+	c.Lock.RLock()
+	defer c.Lock.RUnlock()
+
 	for _, tuple := range c.ServerList {
 		if tuple.Regexp.MatchString(host) {
 			return tuple.Server
@@ -49,8 +54,8 @@ func (c *Proxy) Get(host string) *Server {
 	return c.Default
 }
 
-func (c *Config) CreateProxy() (Proxy, error) {
-	var ret Proxy
+func (p *Proxy) Update(c *Config) error {
+	servers := []ServerAndRegexp{}
 	for i, server := range c.Servers {
 		for _, hostname := range server.Names {
 			var host_regexp *regexp.Regexp
@@ -61,19 +66,27 @@ func (c *Config) CreateProxy() (Proxy, error) {
 				host_regexp, err = regexp.Compile("^" + regexp.QuoteMeta(hostname) + "$")
 			}
 			if err != nil {
-				return Proxy{}, err
+				fmt.Errorf("Cannot update proxy due to invalid regex: %v", err)
+				return err
 			}
 			tuple := ServerAndRegexp{&c.Servers[i], host_regexp}
-			ret.ServerList = append(ret.ServerList, tuple)
+			servers = append(servers, tuple)
 		}
 	}
+	var def *Server
 	for i, server := range c.Servers {
 		if server.Default {
-			ret.Default = &c.Servers[i]
+			def = &c.Servers[i]
 			break
 		}
 	}
-	return ret, nil
+
+	p.Lock.Lock()
+	defer p.Lock.Unlock()
+	p.ServerList = servers
+	p.Default = def
+
+	return nil
 }
 
 func (c *Config) Serve() error {
@@ -84,7 +97,8 @@ func (c *Config) Serve() error {
 		return err
 	}
 
-	server, err := c.CreateProxy()
+	proxy := Proxy{}
+	err = proxy.Update(c)
 	if err != nil {
 		return err
 	}
@@ -94,7 +108,7 @@ func (c *Config) Serve() error {
 		if err != nil {
 			return err
 		}
-		go server.Handle(conn)
+		go proxy.Handle(conn)
 	}
 }
 
