@@ -27,7 +27,7 @@ import (
 	"net"
 	"regexp"
 
-	"pault.ag/go/sniff/parser"
+	"github.com/paultag/sniff/parser"
 )
 
 type ServerAndRegexp struct {
