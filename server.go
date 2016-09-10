@@ -27,8 +27,22 @@ import (
 	"net"
 	"regexp"
 	"sync"
+	"time"
 
 	"github.com/paultag/sniff/parser"
+
+	"k8s.io/client-go/1.4/kubernetes/typed/extensions/v1beta1"
+	"k8s.io/client-go/1.4/pkg/api"
+	"k8s.io/client-go/1.4/pkg/apis/extensions"
+	"k8s.io/client-go/1.4/pkg/watch"
+	"k8s.io/client-go/1.4/tools/clientcmd"
+)
+
+const (
+	// ingressClassKey picks a specific "class" for the Ingress. The controller
+	// only processes Ingresses with this annotation either unset, or set
+	// to either nginxIngressClass or the empty string.
+	ingressClassKey = "kubernetes.io/ingress.class"
 )
 
 type ServerAndRegexp struct {
@@ -66,8 +80,7 @@ func (p *Proxy) Update(c *Config) error {
 				host_regexp, err = regexp.Compile("^" + regexp.QuoteMeta(hostname) + "$")
 			}
 			if err != nil {
-				fmt.Errorf("Cannot update proxy due to invalid regex: %v", err)
-				return err
+				return fmt.Errorf("cannot update proxy due to invalid regex: %v", err)
 			}
 			tuple := ServerAndRegexp{&c.Servers[i], host_regexp}
 			servers = append(servers, tuple)
@@ -101,6 +114,103 @@ func (c *Config) Serve() error {
 	err = proxy.Update(c)
 	if err != nil {
 		return err
+	}
+
+	if c.Kubernetes != nil {
+		rules := clientcmd.NewDefaultClientConfigLoadingRules()
+		if c.Kubernetes.Kubeconfig != "" {
+			rules.ExplicitPath = c.Kubernetes.Kubeconfig
+		}
+		ccfg, err := rules.Load()
+		if err != nil {
+			return err
+		}
+		extclient := v1beta1.NewForConfigOrDie(ccfg)
+
+		// watch ingresses
+		updateTrigger := make(chan struct{}, 1)
+		ingresses := map[string]*extensions.Ingress{}
+		lock := sync.Mutex{}
+		go func() {
+			for {
+				w, err := extclient.Ingresses().Watch(api.ListOptions{})
+				if err != nil {
+					fmt.Printf("Ingress watch error: %v\n", err)
+					// TODO: add backoff logic
+					time.Sleep(time.Second)
+					continue
+				}
+				evs := w.ResultChan()
+
+			EventLoop:
+				for ev := range evs {
+					i := ev.Object.(*extensions.Ingress)
+					if i != nil && i.Annotations[ingressClassKey] != "sni-tcp" {
+						continue
+					}
+					switch ev.Type {
+					case watch.Added, watch.Modified:
+						lock.Lock()
+						ingresses[i.Namespace+"/"+i.Name] = i
+						lock.Unlock()
+					case watch.Deleted:
+						lock.Lock()
+						delete(ingresses, i.Namespace+"/"+i.Name)
+						lock.Unlock()
+					case watch.Error:
+						fmt.Printf("Ingress watch error event: %v\n", ev.Object)
+						w.Stop()
+						break EventLoop
+					}
+					select {
+					case updateTrigger <- struct{}{}:
+					default:
+					}
+				}
+
+				// TODO: add backoff logic
+				time.Sleep(time.Second)
+			}
+		}()
+
+		go func() {
+			for range updateTrigger {
+				lock.Lock()
+				for _, i := range ingresses {
+					c.Servers = []Server{}
+					if i.Spec.Backend != nil {
+						c.Servers = append(c.Servers, Server{
+							Default: true,
+							Host:    i.Spec.Backend.ServiceName + "." + i.Namespace,
+							Port:    i.Spec.Backend.ServicePort,
+						})
+					}
+					for _, r := range i.Spec.Rules {
+						if r.HTTP == nil {
+							continue
+						}
+						for _, p := range r.HTTP.Paths {
+							if p.Path != "" {
+								continue
+							}
+							c.Servers = append(c.Servers, Server{
+								Names: []string{r.Host},
+								Host:  i.Spec.Backend.ServiceName + "." + i.Namespace,
+								Port:  i.Spec.Backend.ServicePort,
+							})
+						}
+					}
+				}
+				lock.Unlock()
+
+				err := proxy.Update(c)
+				if err != nil {
+					fmt.Printf("Error updating proxy: %v\n", err)
+					// TODO: add backoff logic
+					time.Sleep(time.Second)
+				}
+			}
+		}()
 	}
 
 	for {
