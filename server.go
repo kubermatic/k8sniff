@@ -103,6 +103,7 @@ func (p *Proxy) Update(c *Config) error {
 }
 
 func (c *Config) Serve() error {
+	glog.V(1).Infof("Listening on %s:%d", c.Bind.Host, c.Bind.Port)
 	listener, err := net.Listen("tcp", fmt.Sprintf(
 		"%s:%d", c.Bind.Host, c.Bind.Port,
 	))
@@ -229,6 +230,12 @@ func (c *Config) Serve() error {
 		if err != nil {
 			return err
 		}
+		glog.V(3).Infof(
+			"%s -> %s",
+			conn.RemoteAddr(),
+			conn.LocalAddr(),
+			time.Now().String(),
+		)
 		go proxy.Handle(conn)
 	}
 }
