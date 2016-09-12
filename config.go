@@ -34,7 +34,7 @@ type Config struct {
 
 type Kubernetes struct {
 	Kubeconfig   string
-	Ingressclass string
+	IngressClass string
 }
 
 type Bind struct {

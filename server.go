@@ -136,6 +136,10 @@ func (c *Config) Serve() error {
 		updateTrigger := make(chan struct{}, 1)
 		ingresses := map[string]*extensions.Ingress{}
 		lock := sync.Mutex{}
+		class := c.Kubernetes.IngressClass
+		if class == "" {
+			class = "sniff"
+		}
 		go func() {
 			for {
 				w, err := extclient.Ingresses("").Watch(api.ListOptions{})
@@ -150,7 +154,7 @@ func (c *Config) Serve() error {
 			EventLoop:
 				for ev := range evs {
 					i := ev.Object.(*extensions.Ingress)
-					if i != nil && i.Annotations[ingressClassKey] != "sni-tcp" {
+					if i != nil && i.Annotations[ingressClassKey] != class {
 						continue
 					}
 					switch ev.Type {
