@@ -234,7 +234,6 @@ func (c *Config) Serve() error {
 			"%s -> %s",
 			conn.RemoteAddr(),
 			conn.LocalAddr(),
-			time.Now().String(),
 		)
 		go proxy.Handle(conn)
 	}
