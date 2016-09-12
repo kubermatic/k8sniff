@@ -23,12 +23,12 @@ package main
 import (
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"regexp"
 	"sync"
 	"time"
 
+	"github.com/golang/glog"
 	"github.com/paultag/sniff/parser"
 
 	"k8s.io/client-go/1.4/kubernetes/typed/extensions/v1beta1"
@@ -144,7 +144,7 @@ func (c *Config) Serve() error {
 			for {
 				w, err := extclient.Ingresses("").Watch(api.ListOptions{})
 				if err != nil {
-					fmt.Printf("Ingress watch error: %v\n", err)
+					glog.Errorf("Ingress watch error: %v", err)
 					// TODO: add backoff logic
 					time.Sleep(time.Second)
 					continue
@@ -167,7 +167,7 @@ func (c *Config) Serve() error {
 						delete(ingresses, i.Namespace+"/"+i.Name)
 						lock.Unlock()
 					case watch.Error:
-						fmt.Printf("Ingress watch error event: %v\n", ev.Object)
+						glog.Errorf("Ingress watch error event: %v", ev.Object)
 						w.Stop()
 						break EventLoop
 					}
@@ -216,7 +216,7 @@ func (c *Config) Serve() error {
 
 				err := proxy.Update(c)
 				if err != nil {
-					fmt.Printf("Error updating proxy: %v\n", err)
+					glog.Errorf("Error updating proxy: %v", err)
 					// TODO: add backoff logic
 					time.Sleep(time.Second)
 				}
@@ -238,26 +238,26 @@ func (s *Proxy) Handle(conn net.Conn) {
 
 	length, err := conn.Read(data)
 	if err != nil {
-		log.Printf("Error: %s", err)
+		glog.Errorf("Error reading the configuration: %s", err)
 	}
 
 	var proxy *Server
 	hostname, hostname_err := parser.GetHostname(data[:])
 	if hostname_err == nil {
-		log.Printf("Parsed hostname: %s\n", hostname)
+		glog.V(6).Infof("Parsed hostname: %s", hostname)
 
 		proxy = s.Get(hostname)
 		if proxy == nil {
-			log.Printf("No proxy matched %s", hostname)
+			glog.V(4).Infof("No proxy matched %s", hostname)
 			conn.Close()
 			return
 		}
 	} else {
-		log.Printf("Parsed request without hostname")
+		glog.V(6).Info("Parsed request without hostname")
 
 		proxy = s.Default
 		if proxy == nil {
-			log.Printf("No default proxy")
+			glog.V(4).Info("No default proxy")
 			conn.Close()
 			return
 		}
@@ -267,14 +267,14 @@ func (s *Proxy) Handle(conn net.Conn) {
 		"%s:%d", proxy.Host, proxy.Port,
 	))
 	if err != nil {
-		log.Printf("Error: %s", err)
+		glog.Warningf("Error connecting to backend: %s", err)
 		conn.Close()
 		return
 	}
 	n, err := clientConn.Write(data[:length])
-	log.Printf("Wrote %d bytes\n", n)
+	glog.V(7).Infof("Wrote %d bytes", n)
 	if err != nil {
-		log.Printf("Error: %s", err)
+		glog.V(7).Infof("Error sending data to backend: %s", err)
 		conn.Close()
 		clientConn.Close()
 	}
@@ -285,7 +285,7 @@ func Copycat(client, server net.Conn) {
 	defer client.Close()
 	defer server.Close()
 
-	log.Printf("Entering copy routine\n")
+	glog.V(6).Info("Entering copy routine")
 
 	doCopy := func(s, c net.Conn, cancel chan<- bool) {
 		io.Copy(s, c)
@@ -299,7 +299,7 @@ func Copycat(client, server net.Conn) {
 
 	select {
 	case <-cancel:
-		log.Printf("Disconnect\n")
+		glog.V(6).Info("Disconnected")
 		return
 	}
 
