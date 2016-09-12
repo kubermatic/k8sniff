@@ -34,6 +34,7 @@ import (
 	"k8s.io/client-go/1.4/kubernetes/typed/extensions/v1beta1"
 	"k8s.io/client-go/1.4/pkg/api"
 	"k8s.io/client-go/1.4/pkg/apis/extensions"
+	_ "k8s.io/client-go/1.4/pkg/apis/extensions/install"
 	"k8s.io/client-go/1.4/pkg/watch"
 	"k8s.io/client-go/1.4/tools/clientcmd"
 )
@@ -126,7 +127,7 @@ func (c *Config) Serve() error {
 		if err != nil {
 			return err
 		}
-		ccfg := clientcmd.NewDefaultClientConfig(*cmdcfg, nil)
+		ccfg := clientcmd.NewDefaultClientConfig(*cmdcfg, &clientcmd.ConfigOverrides{})
 		rcfg, err := ccfg.ClientConfig()
 		if err != nil {
 			return err

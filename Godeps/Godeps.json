@@ -182,6 +182,10 @@
 			"Rev": "93fcd402979cfad8a7151f96e016416947c6a3cb"
 		},
 		{
+			"ImportPath": "k8s.io/client-go/1.4/pkg/apis/extensions/install",
+			"Rev": "93fcd402979cfad8a7151f96e016416947c6a3cb"
+		},
+		{
 			"ImportPath": "k8s.io/client-go/1.4/pkg/apis/extensions/v1beta1",
 			"Rev": "93fcd402979cfad8a7151f96e016416947c6a3cb"
 		},
