@@ -121,11 +121,16 @@ func (c *Config) Serve() error {
 		if c.Kubernetes.Kubeconfig != "" {
 			rules.ExplicitPath = c.Kubernetes.Kubeconfig
 		}
-		ccfg, err := rules.Load()
+		cmdcfg, err := rules.Load()
 		if err != nil {
 			return err
 		}
-		extclient := v1beta1.NewForConfigOrDie(ccfg)
+		ccfg := clientcmd.NewDefaultClientConfig(*cmdcfg, nil)
+		rcfg, err := ccfg.ClientConfig()
+		if err != nil {
+			return err
+		}
+		extclient := v1beta1.NewForConfigOrDie(rcfg)
 
 		// watch ingresses
 		updateTrigger := make(chan struct{}, 1)
@@ -133,7 +138,7 @@ func (c *Config) Serve() error {
 		lock := sync.Mutex{}
 		go func() {
 			for {
-				w, err := extclient.Ingresses().Watch(api.ListOptions{})
+				w, err := extclient.Ingresses("").Watch(api.ListOptions{})
 				if err != nil {
 					fmt.Printf("Ingress watch error: %v\n", err)
 					// TODO: add backoff logic
@@ -182,7 +187,8 @@ func (c *Config) Serve() error {
 						c.Servers = append(c.Servers, Server{
 							Default: true,
 							Host:    i.Spec.Backend.ServiceName + "." + i.Namespace,
-							Port:    i.Spec.Backend.ServicePort,
+							// TODO: support string values:
+							Port:    int(i.Spec.Backend.ServicePort.IntVal),
 						})
 					}
 					for _, r := range i.Spec.Rules {
@@ -196,7 +202,8 @@ func (c *Config) Serve() error {
 							c.Servers = append(c.Servers, Server{
 								Names: []string{r.Host},
 								Host:  i.Spec.Backend.ServiceName + "." + i.Namespace,
-								Port:  i.Spec.Backend.ServicePort,
+								// TODO: support string values:
+								Port:  int(i.Spec.Backend.ServicePort.IntVal),
 							})
 						}
 					}
