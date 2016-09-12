@@ -192,7 +192,7 @@ func (c *Config) Serve() error {
 							Default: true,
 							Host:    i.Spec.Backend.ServiceName + "." + i.Namespace,
 							// TODO: support string values:
-							Port:    int(i.Spec.Backend.ServicePort.IntVal),
+							Port: int(i.Spec.Backend.ServicePort.IntVal),
 						})
 					}
 					for _, r := range i.Spec.Rules {
@@ -207,7 +207,7 @@ func (c *Config) Serve() error {
 								Names: []string{r.Host},
 								Host:  i.Spec.Backend.ServiceName + "." + i.Namespace,
 								// TODO: support string values:
-								Port:  int(i.Spec.Backend.ServicePort.IntVal),
+								Port: int(i.Spec.Backend.ServicePort.IntVal),
 							})
 						}
 					}
