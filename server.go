@@ -37,10 +37,10 @@ import (
 	_ "k8s.io/client-go/1.4/pkg/apis/extensions/install"
 	extapi "k8s.io/client-go/1.4/pkg/apis/extensions/v1beta1"
 	"k8s.io/client-go/1.4/pkg/fields"
+	"k8s.io/client-go/1.4/pkg/util/intstr"
 	"k8s.io/client-go/1.4/pkg/watch"
 	"k8s.io/client-go/1.4/tools/cache"
 	"k8s.io/client-go/1.4/tools/clientcmd"
-	"k8s.io/contrib/compare/Godeps/_workspace/src/k8s.io/kubernetes/pkg/util/intstr"
 )
 
 const (

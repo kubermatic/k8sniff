@@ -106,6 +106,10 @@
 			"Rev": "53feefa2559fb8dfa8d81baad31be332c97d6c77"
 		},
 		{
+			"ImportPath": "k8s.io/client-go/1.4/kubernetes/typed/core/v1",
+			"Rev": "93fcd402979cfad8a7151f96e016416947c6a3cb"
+		},
+		{
 			"ImportPath": "k8s.io/client-go/1.4/kubernetes/typed/extensions/v1beta1",
 			"Rev": "93fcd402979cfad8a7151f96e016416947c6a3cb"
 		},
@@ -170,11 +174,19 @@
 			"Rev": "93fcd402979cfad8a7151f96e016416947c6a3cb"
 		},
 		{
+			"ImportPath": "k8s.io/client-go/1.4/pkg/apis/apps",
+			"Rev": "93fcd402979cfad8a7151f96e016416947c6a3cb"
+		},
+		{
 			"ImportPath": "k8s.io/client-go/1.4/pkg/apis/autoscaling",
 			"Rev": "93fcd402979cfad8a7151f96e016416947c6a3cb"
 		},
 		{
 			"ImportPath": "k8s.io/client-go/1.4/pkg/apis/batch",
+			"Rev": "93fcd402979cfad8a7151f96e016416947c6a3cb"
+		},
+		{
+			"ImportPath": "k8s.io/client-go/1.4/pkg/apis/certificates",
 			"Rev": "93fcd402979cfad8a7151f96e016416947c6a3cb"
 		},
 		{
@@ -187,6 +199,14 @@
 		},
 		{
 			"ImportPath": "k8s.io/client-go/1.4/pkg/apis/extensions/v1beta1",
+			"Rev": "93fcd402979cfad8a7151f96e016416947c6a3cb"
+		},
+		{
+			"ImportPath": "k8s.io/client-go/1.4/pkg/apis/policy",
+			"Rev": "93fcd402979cfad8a7151f96e016416947c6a3cb"
+		},
+		{
+			"ImportPath": "k8s.io/client-go/1.4/pkg/apis/policy/v1alpha1",
 			"Rev": "93fcd402979cfad8a7151f96e016416947c6a3cb"
 		},
 		{
@@ -371,6 +391,10 @@
 		},
 		{
 			"ImportPath": "k8s.io/client-go/1.4/tools/auth",
+			"Rev": "93fcd402979cfad8a7151f96e016416947c6a3cb"
+		},
+		{
+			"ImportPath": "k8s.io/client-go/1.4/tools/cache",
 			"Rev": "93fcd402979cfad8a7151f96e016416947c6a3cb"
 		},
 		{
