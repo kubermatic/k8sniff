@@ -31,11 +31,13 @@ import (
 	"github.com/golang/glog"
 	"github.com/paultag/sniff/parser"
 
-	"k8s.io/client-go/1.4/kubernetes/typed/core/v1"
-	"k8s.io/client-go/1.4/kubernetes/typed/extensions/v1beta1"
-	api "k8s.io/client-go/1.4/pkg/api/v1"
+	corev1 "k8s.io/client-go/1.4/kubernetes/typed/core/v1"
+	typedv1beta1 "k8s.io/client-go/1.4/kubernetes/typed/extensions/v1beta1"
+	"k8s.io/client-go/1.4/pkg/api"
+	_ "k8s.io/client-go/1.4/pkg/api/install"
+	apiv1 "k8s.io/client-go/1.4/pkg/api/v1"
 	_ "k8s.io/client-go/1.4/pkg/apis/extensions/install"
-	extapi "k8s.io/client-go/1.4/pkg/apis/extensions/v1beta1"
+	extapiv1beta1 "k8s.io/client-go/1.4/pkg/apis/extensions/v1beta1"
 	"k8s.io/client-go/1.4/pkg/fields"
 	"k8s.io/client-go/1.4/pkg/util/intstr"
 	"k8s.io/client-go/1.4/pkg/watch"
@@ -136,17 +138,17 @@ func (c *Config) Serve() error {
 		if err != nil {
 			return err
 		}
-		extclient := v1beta1.NewForConfigOrDie(rcfg)
-		client := v1.NewForConfigOrDie(rcfg)
+		extclient := typedv1beta1.NewForConfigOrDie(rcfg)
+		client := corev1.NewForConfigOrDie(rcfg)
 
 		// watch services
 		services := cache.NewStore(cache.MetaNamespaceKeyFunc)
 		lw := cache.NewListWatchFromClient(client, "services", "", fields.Everything())
-		cache.NewReflector(lw, &api.Service{}, services, time.Minute).Run()
+		cache.NewReflector(lw, &apiv1.Service{}, services, time.Minute).Run()
 
 		// watch ingresses
 		updateTrigger := make(chan struct{}, 1)
-		ingresses := map[string]*extapi.Ingress{}
+		ingresses := map[string]*extapiv1beta1.Ingress{}
 		lock := sync.Mutex{}
 		class := c.Kubernetes.IngressClass
 		if class == "" {
@@ -165,7 +167,7 @@ func (c *Config) Serve() error {
 
 			EventLoop:
 				for ev := range evs {
-					i := ev.Object.(*extapi.Ingress)
+					i := ev.Object.(*extapiv1beta1.Ingress)
 					if i != nil && i.Annotations[ingressClassKey] != class {
 						continue
 					}
@@ -202,7 +204,7 @@ func (c *Config) Serve() error {
 			for range updateTrigger {
 				lock.Lock()
 
-				serverForBackend := func(ing *extapi.Ingress, backend *extapi.IngressBackend) (*Server, error) {
+				serverForBackend := func(ing *extapiv1beta1.Ingress, backend *extapiv1beta1.IngressBackend) (*Server, error) {
 					obj, found, err := services.GetByKey(fmt.Sprintf("%s/%s", ing.Namespace, backend.ServiceName))
 					if err != nil {
 						return nil, err
@@ -210,7 +212,7 @@ func (c *Config) Serve() error {
 					if !found {
 						return nil, fmt.Errorf("service %s/%s not found", ing.Namespace, backend.ServiceName)
 					}
-					svc := obj.(*api.Service)
+					svc := obj.(*apiv1.Service)
 					var port int
 					if backend.ServicePort.Type == intstr.String {
 						for _, p := range svc.Spec.Ports {
@@ -220,36 +222,45 @@ func (c *Config) Serve() error {
 							}
 						}
 						if port == 0 {
-							return fmt.Errorf("port %q of service %s/%s not found", backend.ServicePort.StrVal, svc.Namespace, svc.Name)
+							return nil, fmt.Errorf("port %q of service %s/%s not found", backend.ServicePort.StrVal, svc.Namespace, svc.Name)
 						}
 					} else {
 						port = int(backend.ServicePort.IntVal)
 					}
-					return Server{
+					return &Server{
 						Host: svc.Spec.ClusterIP,
 						// TODO: support string values:
 						Port: port,
-					}
+					}, nil
 				}
 
 				for _, i := range ingresses {
 					c.Servers = []Server{}
 					if i.Spec.Backend != nil {
-						s := serverForBackend(i)
+						s, err := serverForBackend(i, i.Spec.Backend)
+						if err != nil {
+							glog.Errorf("Ingress %s/%s error with default backend, skipping: %v", i.Namespace, i.Name, err)
+							continue
+						}
 						s.Default = true
-						c.Servers = append(c.Servers, s)
+						c.Servers = append(c.Servers, *s)
 					}
 					for _, r := range i.Spec.Rules {
 						if r.HTTP == nil {
 							continue
 						}
 						for _, p := range r.HTTP.Paths {
-							if p.Path != "" {
+							if p.Path != "" && p.Path != "/" {
+								glog.Errorf("Ingress %s/%s error with rule, skipping: %v", i.Namespace, i.Name, err)
 								continue
 							}
-							s := serverForBackend(i)
+							s, err := serverForBackend(i, &p.Backend)
+							if err != nil {
+								glog.Errorf("Ingress %s/%s error with rule %q path %q, skipping: %v", i.Namespace, i.Name, r.Host, p.Path, err)
+								continue
+							}
 							s.Names = []string{r.Host}
-							c.Servers = append(c.Servers, s)
+							c.Servers = append(c.Servers, *s)
 						}
 					}
 				}
