@@ -240,14 +240,15 @@ func (c *Config) Serve() error {
 						s, err := serverForBackend(i, i.Spec.Backend)
 						if err != nil {
 							glog.Errorf("Ingress %s/%s error with default backend, skipping: %v", i.Namespace, i.Name, err)
-							continue
+						} else {
+							s.Default = true
+							glog.V(4).Infof("Adding default backend -> %s:%d", s.Host, s.Port)
+							c.Servers = append(c.Servers, *s)
 						}
-						s.Default = true
-						glog.V(4).Infof("Adding default backend -> %s:%d", s.Host, s.Port)
-						c.Servers = append(c.Servers, *s)
 					}
 					for _, r := range i.Spec.Rules {
 						if r.HTTP == nil {
+							glog.Errorf("Ingress %s/%s error with rule, skipping: http must be set", i.Namespace, i.Name)
 							continue
 						}
 						for _, p := range r.HTTP.Paths {
