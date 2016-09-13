@@ -161,15 +161,19 @@ func (c *Config) Serve() error {
 					}
 					switch ev.Type {
 					case watch.Added, watch.Modified:
+						glog.V(5).Infof("event %s for %s/%s", ev.Type, i.Namespace, i.Name)
 						lock.Lock()
 						ingresses[i.Namespace+"/"+i.Name] = i
 						lock.Unlock()
 					case watch.Deleted:
+						glog.V(5).Infof("event %s for %s/%s", ev.Type, i.Namespace, i.Name)
 						lock.Lock()
 						delete(ingresses, i.Namespace+"/"+i.Name)
 						lock.Unlock()
 					case watch.Error:
-						glog.Errorf("Ingress watch error event: %v", ev.Object)
+						if i != nil {
+							glog.V(5).Infof("event %s for %s/%s", ev.Type, i.Namespace, i.Name)
+						}
 						w.Stop()
 						break EventLoop
 					}
@@ -216,12 +220,16 @@ func (c *Config) Serve() error {
 				}
 				lock.Unlock()
 
+				glog.V(2).Infof("Updating proxy configuration")
 				err := proxy.Update(c)
 				if err != nil {
 					glog.Errorf("Error updating proxy: %v", err)
 					// TODO: add backoff logic
 					time.Sleep(time.Second)
+				} else {
+					glog.V(2).Infof("Proxy configuration update done")
 				}
+
 			}
 		}()
 	}
