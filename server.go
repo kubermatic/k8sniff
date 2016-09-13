@@ -31,12 +31,16 @@ import (
 	"github.com/golang/glog"
 	"github.com/paultag/sniff/parser"
 
+	"k8s.io/client-go/1.4/kubernetes/typed/core/v1"
 	"k8s.io/client-go/1.4/kubernetes/typed/extensions/v1beta1"
-	"k8s.io/client-go/1.4/pkg/api"
-	extapi "k8s.io/client-go/1.4/pkg/apis/extensions/v1beta1"
+	api "k8s.io/client-go/1.4/pkg/api/v1"
 	_ "k8s.io/client-go/1.4/pkg/apis/extensions/install"
+	extapi "k8s.io/client-go/1.4/pkg/apis/extensions/v1beta1"
+	"k8s.io/client-go/1.4/pkg/fields"
 	"k8s.io/client-go/1.4/pkg/watch"
+	"k8s.io/client-go/1.4/tools/cache"
 	"k8s.io/client-go/1.4/tools/clientcmd"
+	"k8s.io/contrib/compare/Godeps/_workspace/src/k8s.io/kubernetes/pkg/util/intstr"
 )
 
 const (
@@ -133,6 +137,12 @@ func (c *Config) Serve() error {
 			return err
 		}
 		extclient := v1beta1.NewForConfigOrDie(rcfg)
+		client := v1.NewForConfigOrDie(rcfg)
+
+		// watch services
+		services := cache.NewStore(cache.MetaNamespaceKeyFunc)
+		lw := cache.NewListWatchFromClient(client, "services", "", fields.Everything())
+		cache.NewReflector(lw, &api.Service{}, services, time.Minute).Run()
 
 		// watch ingresses
 		updateTrigger := make(chan struct{}, 1)
@@ -191,15 +201,43 @@ func (c *Config) Serve() error {
 		go func() {
 			for range updateTrigger {
 				lock.Lock()
+
+				serverForBackend := func(ing *extapi.Ingress, backend *extapi.IngressBackend) (*Server, error) {
+					obj, found, err := services.GetByKey(fmt.Sprintf("%s/%s", ing.Namespace, backend.ServiceName))
+					if err != nil {
+						return nil, err
+					}
+					if !found {
+						return nil, fmt.Errorf("service %s/%s not found", ing.Namespace, backend.ServiceName)
+					}
+					svc := obj.(*api.Service)
+					var port int
+					if backend.ServicePort.Type == intstr.String {
+						for _, p := range svc.Spec.Ports {
+							if p.Name == backend.ServicePort.StrVal {
+								port = int(p.Port)
+								break
+							}
+						}
+						if port == 0 {
+							return fmt.Errorf("port %q of service %s/%s not found", backend.ServicePort.StrVal, svc.Namespace, svc.Name)
+						}
+					} else {
+						port = int(backend.ServicePort.IntVal)
+					}
+					return Server{
+						Host: svc.Spec.ClusterIP,
+						// TODO: support string values:
+						Port: port,
+					}
+				}
+
 				for _, i := range ingresses {
 					c.Servers = []Server{}
 					if i.Spec.Backend != nil {
-						c.Servers = append(c.Servers, Server{
-							Default: true,
-							Host:    i.Spec.Backend.ServiceName + "." + i.Namespace,
-							// TODO: support string values:
-							Port: int(i.Spec.Backend.ServicePort.IntVal),
-						})
+						s := serverForBackend(i)
+						s.Default = true
+						c.Servers = append(c.Servers, s)
 					}
 					for _, r := range i.Spec.Rules {
 						if r.HTTP == nil {
@@ -209,12 +247,9 @@ func (c *Config) Serve() error {
 							if p.Path != "" {
 								continue
 							}
-							c.Servers = append(c.Servers, Server{
-								Names: []string{r.Host},
-								Host:  i.Spec.Backend.ServiceName + "." + i.Namespace,
-								// TODO: support string values:
-								Port: int(i.Spec.Backend.ServicePort.IntVal),
-							})
+							s := serverForBackend(i)
+							s.Names = []string{r.Host}
+							c.Servers = append(c.Servers, s)
 						}
 					}
 				}
