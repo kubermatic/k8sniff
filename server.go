@@ -243,6 +243,7 @@ func (c *Config) Serve() error {
 							continue
 						}
 						s.Default = true
+						glog.V(4).Infof("Adding default backend -> %s:%d", s.Host, s.Port)
 						c.Servers = append(c.Servers, *s)
 					}
 					for _, r := range i.Spec.Rules {
@@ -260,6 +261,7 @@ func (c *Config) Serve() error {
 								continue
 							}
 							s.Names = []string{r.Host}
+							glog.V(4).Infof("Adding backend %q -> %s:%d", r.Host, s.Host, s.Port)
 							c.Servers = append(c.Servers, *s)
 						}
 					}
