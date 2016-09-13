@@ -144,7 +144,17 @@ func (c *Config) Serve() error {
 		// watch services
 		services := cache.NewStore(cache.MetaNamespaceKeyFunc)
 		lw := cache.NewListWatchFromClient(client, "services", "", fields.Everything())
-		cache.NewReflector(lw, &apiv1.Service{}, services, time.Minute).Run()
+		refl := cache.NewReflector(lw, &apiv1.Service{}, services, time.Minute)
+		refl.Run()
+
+		// wait until services are ready
+		glog.V(1).Infof("Waiting for service store to be ready")
+		for {
+			if refl.LastSyncResourceVersion() != "" {
+				break
+			}
+			time.Sleep(time.Millisecond * 200)
+		}
 
 		// watch ingresses
 		updateTrigger := make(chan struct{}, 1)
