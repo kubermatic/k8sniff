@@ -33,7 +33,7 @@ import (
 
 	"k8s.io/client-go/1.4/kubernetes/typed/extensions/v1beta1"
 	"k8s.io/client-go/1.4/pkg/api"
-	"k8s.io/client-go/1.4/pkg/apis/extensions"
+	extapi "k8s.io/client-go/1.4/pkg/apis/extensions/v1beta1"
 	_ "k8s.io/client-go/1.4/pkg/apis/extensions/install"
 	"k8s.io/client-go/1.4/pkg/watch"
 	"k8s.io/client-go/1.4/tools/clientcmd"
@@ -136,7 +136,7 @@ func (c *Config) Serve() error {
 
 		// watch ingresses
 		updateTrigger := make(chan struct{}, 1)
-		ingresses := map[string]*extensions.Ingress{}
+		ingresses := map[string]*extapi.Ingress{}
 		lock := sync.Mutex{}
 		class := c.Kubernetes.IngressClass
 		if class == "" {
@@ -155,7 +155,7 @@ func (c *Config) Serve() error {
 
 			EventLoop:
 				for ev := range evs {
-					i := ev.Object.(*extensions.Ingress)
+					i := ev.Object.(*extapi.Ingress)
 					if i != nil && i.Annotations[ingressClassKey] != class {
 						continue
 					}
