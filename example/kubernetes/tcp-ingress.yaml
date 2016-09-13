@@ -6,7 +6,7 @@ metadata:
     kubernetes.io/ingress.class: sniff
 spec:
   backend:
-    serviceName: default
+    serviceName: bar
     servicePort: 443
   rules:
   - host: foo
