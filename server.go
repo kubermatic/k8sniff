@@ -318,11 +318,13 @@ func (c *Config) Serve() error {
 }
 
 func (s *Proxy) Handle(conn net.Conn) {
+	defer conn.Close()
 	data := make([]byte, 4096)
 
 	length, err := conn.Read(data)
 	if err != nil {
-		glog.Errorf("Error reading the configuration: %s", err)
+		glog.V(4).Infof("Error reading the first 4k of the connection: %s", err)
+		return
 	}
 
 	var proxy *Server
@@ -333,7 +335,6 @@ func (s *Proxy) Handle(conn net.Conn) {
 		proxy = s.Get(hostname)
 		if proxy == nil {
 			glog.V(4).Infof("No proxy matched %s", hostname)
-			conn.Close()
 			return
 		}
 	} else {
@@ -342,7 +343,6 @@ func (s *Proxy) Handle(conn net.Conn) {
 		proxy = s.Default
 		if proxy == nil {
 			glog.V(4).Info("No default proxy")
-			conn.Close()
 			return
 		}
 	}
@@ -352,23 +352,19 @@ func (s *Proxy) Handle(conn net.Conn) {
 	))
 	if err != nil {
 		glog.Warningf("Error connecting to backend: %s", err)
-		conn.Close()
 		return
 	}
+	defer clientConn.Close()
 	n, err := clientConn.Write(data[:length])
 	glog.V(7).Infof("Wrote %d bytes", n)
 	if err != nil {
 		glog.V(7).Infof("Error sending data to backend: %s", err)
-		conn.Close()
 		clientConn.Close()
 	}
 	Copycat(clientConn, conn)
 }
 
 func Copycat(client, server net.Conn) {
-	defer client.Close()
-	defer server.Close()
-
 	glog.V(6).Info("Entering copy routine")
 
 	doCopy := func(s, c net.Conn, cancel chan<- bool) {
