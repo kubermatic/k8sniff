@@ -1,5 +1,5 @@
 hash: be6db1a566b86d3ebad58ba4e6ab8d146bff8dea0ca61c588568b73b185a2f20
-updated: 2016-09-13T16:07:32.223808783+02:00
+updated: 2016-09-14T15:07:56.481471084+02:00
 imports:
 - name: github.com/blang/semver
   version: 60ec3488bfea7cca02b021d106d9911120d25fe9
@@ -10,7 +10,7 @@ imports:
   subpackages:
   - spew
 - name: github.com/docker/distribution
-  version: cb744efe8bc15e792aca1b927b8c696bdf079ac1
+  version: 17fb0bb6b30838f3f80833c6522cb374549663ce
   subpackages:
   - digest
   - reference
@@ -47,7 +47,7 @@ imports:
   subpackages:
   - codec
 - name: golang.org/x/net
-  version: 749a502dd1eaf3e5bfd4f8956748c502357c0bbe
+  version: de35ec43e7a9aabd6a9c54d2898220ea7e44de7d
   subpackages:
   - context
   - http2
@@ -59,10 +59,12 @@ imports:
 - name: k8s.io/client-go
   version: 93fcd402979cfad8a7151f96e016416947c6a3cb
   subpackages:
+  - 1.4/kubernetes/typed/core/v1
   - 1.4/kubernetes/typed/extensions/v1beta1
   - 1.4/pkg/api
   - 1.4/pkg/api/endpoints
   - 1.4/pkg/api/errors
+  - 1.4/pkg/api/install
   - 1.4/pkg/api/meta
   - 1.4/pkg/api/meta/metatypes
   - 1.4/pkg/api/pod
@@ -75,11 +77,15 @@ imports:
   - 1.4/pkg/api/validation
   - 1.4/pkg/apimachinery
   - 1.4/pkg/apimachinery/registered
+  - 1.4/pkg/apis/apps
   - 1.4/pkg/apis/autoscaling
   - 1.4/pkg/apis/batch
+  - 1.4/pkg/apis/certificates
   - 1.4/pkg/apis/extensions
   - 1.4/pkg/apis/extensions/install
   - 1.4/pkg/apis/extensions/v1beta1
+  - 1.4/pkg/apis/policy
+  - 1.4/pkg/apis/policy/v1alpha1
   - 1.4/pkg/auth/user
   - 1.4/pkg/capabilities
   - 1.4/pkg/conversion
@@ -126,6 +132,7 @@ imports:
   - 1.4/pkg/watch/versioned
   - 1.4/rest
   - 1.4/tools/auth
+  - 1.4/tools/cache
   - 1.4/tools/clientcmd
   - 1.4/tools/clientcmd/api
   - 1.4/tools/clientcmd/api/latest
