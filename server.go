@@ -141,10 +141,21 @@ func (c *Config) Serve() error {
 		extclient := typedv1beta1.NewForConfigOrDie(rcfg)
 		client := corev1.NewForConfigOrDie(rcfg)
 
+		// trigger to update the proxy
+		updateTrigger := make(chan struct{}, 1)
+
 		// watch services
-		services := cache.NewStore(cache.MetaNamespaceKeyFunc)
+		services := NotifyingStore{
+			Store: cache.NewStore(cache.MetaNamespaceKeyFunc),
+			NotifyFunc: func () {
+				select {
+				case updateTrigger <- struct{}{}:
+				default:
+				}
+			},
+		}
 		lw := cache.NewListWatchFromClient(client, "services", "", fields.Everything())
-		refl := cache.NewReflector(lw, &apiv1.Service{}, services, time.Minute)
+		refl := cache.NewReflector(lw, &apiv1.Service{}, &services, time.Minute)
 		refl.Run()
 
 		// wait until services are ready
@@ -157,7 +168,6 @@ func (c *Config) Serve() error {
 		}
 
 		// watch ingresses
-		updateTrigger := make(chan struct{}, 1)
 		ingresses := map[string]*extapiv1beta1.Ingress{}
 		lock := sync.Mutex{}
 		class := c.Kubernetes.IngressClass
