@@ -129,11 +129,7 @@ func (c *Config) Serve() error {
 		if c.Kubernetes.Kubeconfig != "" {
 			rules.ExplicitPath = c.Kubernetes.Kubeconfig
 		}
-		cmdcfg, err := rules.Load()
-		if err != nil {
-			return err
-		}
-		ccfg := clientcmd.NewDefaultClientConfig(*cmdcfg, &clientcmd.ConfigOverrides{})
+		ccfg := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, &clientcmd.ConfigOverrides{})
 		rcfg, err := ccfg.ClientConfig()
 		if err != nil {
 			return err
