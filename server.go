@@ -31,11 +31,17 @@ import (
 	"github.com/golang/glog"
 	"github.com/paultag/sniff/parser"
 
-	"k8s.io/client-go/1.4/kubernetes/typed/extensions/v1beta1"
+	corev1 "k8s.io/client-go/1.4/kubernetes/typed/core/v1"
+	typedv1beta1 "k8s.io/client-go/1.4/kubernetes/typed/extensions/v1beta1"
 	"k8s.io/client-go/1.4/pkg/api"
-	extapi "k8s.io/client-go/1.4/pkg/apis/extensions/v1beta1"
+	_ "k8s.io/client-go/1.4/pkg/api/install"
+	apiv1 "k8s.io/client-go/1.4/pkg/api/v1"
 	_ "k8s.io/client-go/1.4/pkg/apis/extensions/install"
+	extapiv1beta1 "k8s.io/client-go/1.4/pkg/apis/extensions/v1beta1"
+	"k8s.io/client-go/1.4/pkg/fields"
+	"k8s.io/client-go/1.4/pkg/util/intstr"
 	"k8s.io/client-go/1.4/pkg/watch"
+	"k8s.io/client-go/1.4/tools/cache"
 	"k8s.io/client-go/1.4/tools/clientcmd"
 )
 
@@ -123,20 +129,42 @@ func (c *Config) Serve() error {
 		if c.Kubernetes.Kubeconfig != "" {
 			rules.ExplicitPath = c.Kubernetes.Kubeconfig
 		}
-		cmdcfg, err := rules.Load()
-		if err != nil {
-			return err
-		}
-		ccfg := clientcmd.NewDefaultClientConfig(*cmdcfg, &clientcmd.ConfigOverrides{})
+		ccfg := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, &clientcmd.ConfigOverrides{})
 		rcfg, err := ccfg.ClientConfig()
 		if err != nil {
 			return err
 		}
-		extclient := v1beta1.NewForConfigOrDie(rcfg)
+		extclient := typedv1beta1.NewForConfigOrDie(rcfg)
+		client := corev1.NewForConfigOrDie(rcfg)
+
+		// trigger to update the proxy
+		updateTrigger := make(chan struct{}, 1)
+
+		// watch services
+		services := NotifyingStore{
+			Store: cache.NewStore(cache.MetaNamespaceKeyFunc),
+			NotifyFunc: func () {
+				select {
+				case updateTrigger <- struct{}{}:
+				default:
+				}
+			},
+		}
+		lw := cache.NewListWatchFromClient(client, "services", "", fields.Everything())
+		refl := cache.NewReflector(lw, &apiv1.Service{}, &services, time.Minute)
+		refl.Run()
+
+		// wait until services are ready
+		glog.V(1).Infof("Waiting for service store to be ready")
+		for {
+			if refl.LastSyncResourceVersion() != "" {
+				break
+			}
+			time.Sleep(time.Millisecond * 200)
+		}
 
 		// watch ingresses
-		updateTrigger := make(chan struct{}, 1)
-		ingresses := map[string]*extapi.Ingress{}
+		ingresses := map[string]*extapiv1beta1.Ingress{}
 		lock := sync.Mutex{}
 		class := c.Kubernetes.IngressClass
 		if class == "" {
@@ -155,7 +183,7 @@ func (c *Config) Serve() error {
 
 			EventLoop:
 				for ev := range evs {
-					i := ev.Object.(*extapi.Ingress)
+					i := ev.Object.(*extapiv1beta1.Ingress)
 					if i != nil && i.Annotations[ingressClassKey] != class {
 						continue
 					}
@@ -191,30 +219,67 @@ func (c *Config) Serve() error {
 		go func() {
 			for range updateTrigger {
 				lock.Lock()
+
+				serverForBackend := func(ing *extapiv1beta1.Ingress, backend *extapiv1beta1.IngressBackend) (*Server, error) {
+					obj, found, err := services.GetByKey(fmt.Sprintf("%s/%s", ing.Namespace, backend.ServiceName))
+					if err != nil {
+						return nil, err
+					}
+					if !found {
+						return nil, fmt.Errorf("service %s/%s not found", ing.Namespace, backend.ServiceName)
+					}
+					svc := obj.(*apiv1.Service)
+					var port int
+					if backend.ServicePort.Type == intstr.String {
+						for _, p := range svc.Spec.Ports {
+							if p.Name == backend.ServicePort.StrVal {
+								port = int(p.Port)
+								break
+							}
+						}
+						if port == 0 {
+							return nil, fmt.Errorf("port %q of service %s/%s not found", backend.ServicePort.StrVal, svc.Namespace, svc.Name)
+						}
+					} else {
+						port = int(backend.ServicePort.IntVal)
+					}
+					return &Server{
+						Host: svc.Spec.ClusterIP,
+						// TODO: support string values:
+						Port: port,
+					}, nil
+				}
+
 				for _, i := range ingresses {
 					c.Servers = []Server{}
 					if i.Spec.Backend != nil {
-						c.Servers = append(c.Servers, Server{
-							Default: true,
-							Host:    i.Spec.Backend.ServiceName + "." + i.Namespace,
-							// TODO: support string values:
-							Port: int(i.Spec.Backend.ServicePort.IntVal),
-						})
+						s, err := serverForBackend(i, i.Spec.Backend)
+						if err != nil {
+							glog.Errorf("Ingress %s/%s error with default backend, skipping: %v", i.Namespace, i.Name, err)
+						} else {
+							s.Default = true
+							glog.V(4).Infof("Adding default backend -> %s:%d", s.Host, s.Port)
+							c.Servers = append(c.Servers, *s)
+						}
 					}
 					for _, r := range i.Spec.Rules {
 						if r.HTTP == nil {
+							glog.Errorf("Ingress %s/%s error with rule, skipping: http must be set", i.Namespace, i.Name)
 							continue
 						}
 						for _, p := range r.HTTP.Paths {
-							if p.Path != "" {
+							if p.Path != "" && p.Path != "/" {
+								glog.Errorf("Ingress %s/%s error with rule, skipping: %v", i.Namespace, i.Name, err)
 								continue
 							}
-							c.Servers = append(c.Servers, Server{
-								Names: []string{r.Host},
-								Host:  i.Spec.Backend.ServiceName + "." + i.Namespace,
-								// TODO: support string values:
-								Port: int(i.Spec.Backend.ServicePort.IntVal),
-							})
+							s, err := serverForBackend(i, &p.Backend)
+							if err != nil {
+								glog.Errorf("Ingress %s/%s error with rule %q path %q, skipping: %v", i.Namespace, i.Name, r.Host, p.Path, err)
+								continue
+							}
+							s.Names = []string{r.Host}
+							glog.V(4).Infof("Adding backend %q -> %s:%d", r.Host, s.Host, s.Port)
+							c.Servers = append(c.Servers, *s)
 						}
 					}
 				}
@@ -249,11 +314,13 @@ func (c *Config) Serve() error {
 }
 
 func (s *Proxy) Handle(conn net.Conn) {
+	defer conn.Close()
 	data := make([]byte, 4096)
 
 	length, err := conn.Read(data)
 	if err != nil {
-		glog.Errorf("Error reading the configuration: %s", err)
+		glog.V(4).Infof("Error reading the first 4k of the connection: %s", err)
+		return
 	}
 
 	var proxy *Server
@@ -264,7 +331,6 @@ func (s *Proxy) Handle(conn net.Conn) {
 		proxy = s.Get(hostname)
 		if proxy == nil {
 			glog.V(4).Infof("No proxy matched %s", hostname)
-			conn.Close()
 			return
 		}
 	} else {
@@ -273,7 +339,6 @@ func (s *Proxy) Handle(conn net.Conn) {
 		proxy = s.Default
 		if proxy == nil {
 			glog.V(4).Info("No default proxy")
-			conn.Close()
 			return
 		}
 	}
@@ -283,23 +348,19 @@ func (s *Proxy) Handle(conn net.Conn) {
 	))
 	if err != nil {
 		glog.Warningf("Error connecting to backend: %s", err)
-		conn.Close()
 		return
 	}
+	defer clientConn.Close()
 	n, err := clientConn.Write(data[:length])
 	glog.V(7).Infof("Wrote %d bytes", n)
 	if err != nil {
 		glog.V(7).Infof("Error sending data to backend: %s", err)
-		conn.Close()
 		clientConn.Close()
 	}
 	Copycat(clientConn, conn)
 }
 
 func Copycat(client, server net.Conn) {
-	defer client.Close()
-	defer server.Close()
-
 	glog.V(6).Info("Entering copy routine")
 
 	doCopy := func(s, c net.Conn, cancel chan<- bool) {
