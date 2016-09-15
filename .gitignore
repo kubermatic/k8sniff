@@ -2,3 +2,4 @@
 *.iml
 *swp
 sniff
+.wercker

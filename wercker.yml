@@ -17,7 +17,7 @@ build:
     # Test the project
     - script:
         name: go test
-        code: go test ./...
+        code: go test $(glide nv)
     # Copy binary to a location that gets passed along to the deploy pipeline
     - script:
         name: copy to deployment directory
