@@ -143,7 +143,7 @@ func (c *Config) Serve() error {
 		// watch services
 		services := NotifyingStore{
 			Store: cache.NewStore(cache.MetaNamespaceKeyFunc),
-			NotifyFunc: func () {
+			NotifyFunc: func() {
 				select {
 				case updateTrigger <- struct{}{}:
 				default:
@@ -332,6 +332,8 @@ func (s *Proxy) Handle(conn net.Conn) {
 		if proxy == nil {
 			glog.V(4).Infof("No proxy matched %s", hostname)
 			return
+		} else {
+			glog.V(4).Infof("Host found %s", proxy.Host)
 		}
 	} else {
 		glog.V(6).Info("Parsed request without hostname")
