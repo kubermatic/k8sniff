@@ -250,8 +250,8 @@ func (c *Config) Serve() error {
 					}, nil
 				}
 
+				c.Servers = []Server{}
 				for _, i := range ingresses {
-					c.Servers = []Server{}
 					if i.Spec.Backend != nil {
 						s, err := serverForBackend(i, i.Spec.Backend)
 						if err != nil {
