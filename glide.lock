@@ -34,7 +34,7 @@ imports:
   version: 50d4dbd4eb0e84778abe37cefef140271d96fade
 - name: github.com/juju/ratelimit
   version: 77ed1c8a01217656d2080ad51981f6e99adaa177
-- name: github.com/paultag/sniff
+- name: github.com/kubermatic/k8sniff
   version: c36b8585a41425573d9e3e1890bf3b6ac89a3828
   subpackages:
   - parser

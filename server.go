@@ -29,7 +29,7 @@ import (
 	"time"
 
 	"github.com/golang/glog"
-	"github.com/paultag/sniff/parser"
+	"github.com/kubermatic/k8sniff/parser"
 
 	corev1 "k8s.io/client-go/1.4/kubernetes/typed/core/v1"
 	typedv1beta1 "k8s.io/client-go/1.4/kubernetes/typed/extensions/v1beta1"
@@ -168,7 +168,7 @@ func (c *Config) Serve() error {
 		lock := sync.Mutex{}
 		class := c.Kubernetes.IngressClass
 		if class == "" {
-			class = "sniff"
+			class = "k8sniff"
 		}
 		go func() {
 			for {
