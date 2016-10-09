@@ -28,7 +28,7 @@ deploy:
   box:
     id: alpine:3.4
     cmd: /bin/sh
-  rolling-update:
+  docker-push:
     - internal/docker-push:
         name: push to docker hub as latest
         author: Sebastian Scheele <scheele.s@web.de>
