@@ -20,17 +20,16 @@
 
 package main
 
-import (
-	"flag"
-)
+import "flag"
 
 func main() {
-	var k8sniffConfig string
+	var k8sniffConfig, kubeconfig string
 
 	flag.StringVar(&k8sniffConfig, "config", "k8sniff.json", "Config")
+	flag.StringVar(&kubeconfig, "kubeconfig", "./config", "absolute path to the kubeconfig file")
 	flag.Parse()
-
 	config, err := LoadConfig(k8sniffConfig)
+	config.Kubernetes.Kubeconfig = kubeconfig
 	if err != nil {
 		panic(err)
 	}

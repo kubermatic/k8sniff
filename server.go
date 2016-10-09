@@ -41,6 +41,7 @@ import (
 	"k8s.io/client-go/1.4/pkg/fields"
 	"k8s.io/client-go/1.4/pkg/util/intstr"
 	"k8s.io/client-go/1.4/pkg/watch"
+	"k8s.io/client-go/1.4/rest"
 	"k8s.io/client-go/1.4/tools/cache"
 	"k8s.io/client-go/1.4/tools/clientcmd"
 )
@@ -125,15 +126,22 @@ func (c *Config) Serve() error {
 	}
 
 	if c.Kubernetes != nil {
-		rules := clientcmd.NewDefaultClientConfigLoadingRules()
+		var rcfg *rest.Config
+		var err error
 		if c.Kubernetes.Kubeconfig != "" {
-			rules.ExplicitPath = c.Kubernetes.Kubeconfig
+			// uses the current context in kubeconfig
+			rcfg, err = clientcmd.BuildConfigFromFlags("", c.Kubernetes.Kubeconfig)
+			if err != nil {
+				panic(err.Error())
+			}
+		} else {
+			// creates the in-cluster config
+			rcfg, err = rest.InClusterConfig()
+			if err != nil {
+				panic(err.Error())
+			}
 		}
-		ccfg := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, &clientcmd.ConfigOverrides{})
-		rcfg, err := ccfg.ClientConfig()
-		if err != nil {
-			return err
-		}
+
 		extclient := typedv1beta1.NewForConfigOrDie(rcfg)
 		client := corev1.NewForConfigOrDie(rcfg)
 
