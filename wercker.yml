@@ -32,7 +32,7 @@ deploy:
     - internal/docker-push:
         name: push to docker hub as latest
         author: Sebastian Scheele <scheele.s@web.de>
-        cmd: /pipeline/source/k8k8sniff
+        cmd: /pipeline/source/k8sniff
         username: $USERNAME
         password: $PASSWORD
         email: scheele.s@web.de
