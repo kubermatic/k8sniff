@@ -3,7 +3,7 @@ box: golang:1.7
 build:
   steps:
     - setup-go-workspace:
-        package-dir: github.com/kubermatic/k8k8sniff
+        package-dir: github.com/kubermatic/k8sniff
     - script:
         name: install go tools
         code: |
@@ -13,7 +13,7 @@ build:
     # Statically build the project
     - script:
         name: go build
-        code: CGO_ENABLED=0 go build -a -ldflags '-s' -installsuffix cgo -o k8k8sniff .
+        code: CGO_ENABLED=0 go build -a -ldflags '-s' -installsuffix cgo -o k8sniff .
     # Test the project
     - script:
         name: go test
@@ -22,7 +22,7 @@ build:
     - script:
         name: copy to deployment directory
         code: |
-          cp -av k8k8sniff "$WERCKER_OUTPUT_DIR"
+          cp -av k8sniff "$WERCKER_OUTPUT_DIR"
 
 deploy:
   box:
@@ -32,7 +32,7 @@ deploy:
     - internal/docker-push:
         name: push to docker hub as latest
         author: Sebastian Scheele <scheele.s@web.de>
-        cmd: /pipeline/source/k8k8sniff
+        cmd: /pipeline/source/k8sniff
         username: $USERNAME
         password: $PASSWORD
         email: scheele.s@web.de
