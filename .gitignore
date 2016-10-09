@@ -1,2 +1,5 @@
+.idea
+*.iml
 *swp
 sniff
+.wercker

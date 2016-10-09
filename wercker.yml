@@ -1,0 +1,41 @@
+# The container definition we want to use for developing our app
+box: golang:1.7
+build:
+  steps:
+    - setup-go-workspace:
+        package-dir: github.com/kubermatic/k8k8sniff
+    - script:
+        name: install go tools
+        code: |
+          go version
+          go get
+          git describe --tags |tee VERSION
+    # Statically build the project
+    - script:
+        name: go build
+        code: CGO_ENABLED=0 go build -a -ldflags '-s' -installsuffix cgo -o k8k8sniff .
+    # Test the project
+    - script:
+        name: go test
+        code: go test $(glide nv)
+    # Copy binary to a location that gets passed along to the deploy pipeline
+    - script:
+        name: copy to deployment directory
+        code: |
+          cp -av k8k8sniff "$WERCKER_OUTPUT_DIR"
+
+deploy:
+  box:
+    id: alpine:3.4
+    cmd: /bin/sh
+  rolling-update:
+    - internal/docker-push:
+        name: push to docker hub as latest
+        author: Sebastian Scheele <scheele.s@web.de>
+        cmd: /pipeline/source/k8k8sniff
+        username: $USERNAME
+        password: $PASSWORD
+        email: scheele.s@web.de
+        tag: latest
+        repository: kubermatic/k8sniff
+        registry: https://registry.hub.docker.com

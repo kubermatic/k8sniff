@@ -22,12 +22,19 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 )
 
 type Config struct {
-	Bind    Bind
-	Servers []Server
+	Bind       Bind
+	Servers    []Server
+	Kubernetes *Kubernetes
+}
+
+type Kubernetes struct {
+	Kubeconfig   string
+	IngressClass string
 }
 
 type Bind struct {
@@ -49,5 +56,14 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 	config := Config{}
-	return &config, json.NewDecoder(fd).Decode(&config)
+	err = json.NewDecoder(fd).Decode(&config)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(config.Servers) > 0 && config.Kubernetes != nil {
+		return nil, fmt.Errorf("Cannot set .Servers and .Kubernetes in config file")
+	}
+
+	return &config, err
 }

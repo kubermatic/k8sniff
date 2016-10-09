@@ -23,11 +23,33 @@ package main
 import (
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"regexp"
+	"sync"
+	"time"
 
-	"pault.ag/go/sniff/parser"
+	"github.com/golang/glog"
+	"github.com/kubermatic/k8sniff/parser"
+
+	corev1 "k8s.io/client-go/1.4/kubernetes/typed/core/v1"
+	typedv1beta1 "k8s.io/client-go/1.4/kubernetes/typed/extensions/v1beta1"
+	"k8s.io/client-go/1.4/pkg/api"
+	_ "k8s.io/client-go/1.4/pkg/api/install"
+	apiv1 "k8s.io/client-go/1.4/pkg/api/v1"
+	_ "k8s.io/client-go/1.4/pkg/apis/extensions/install"
+	extapiv1beta1 "k8s.io/client-go/1.4/pkg/apis/extensions/v1beta1"
+	"k8s.io/client-go/1.4/pkg/fields"
+	"k8s.io/client-go/1.4/pkg/util/intstr"
+	"k8s.io/client-go/1.4/pkg/watch"
+	"k8s.io/client-go/1.4/tools/cache"
+	"k8s.io/client-go/1.4/tools/clientcmd"
+)
+
+const (
+	// ingressClassKey picks a specific "class" for the Ingress. The controller
+	// only processes Ingresses with this annotation either unset, or set
+	// to either nginxIngressClass or the empty string.
+	ingressClassKey = "kubernetes.io/ingress.class"
 )
 
 type ServerAndRegexp struct {
@@ -36,11 +58,15 @@ type ServerAndRegexp struct {
 }
 
 type Proxy struct {
+	Lock       sync.RWMutex
 	ServerList []ServerAndRegexp
 	Default    *Server
 }
 
 func (c *Proxy) Get(host string) *Server {
+	c.Lock.RLock()
+	defer c.Lock.RUnlock()
+
 	for _, tuple := range c.ServerList {
 		if tuple.Regexp.MatchString(host) {
 			return tuple.Server
@@ -49,8 +75,8 @@ func (c *Proxy) Get(host string) *Server {
 	return c.Default
 }
 
-func (c *Config) CreateProxy() (Proxy, error) {
-	var ret Proxy
+func (p *Proxy) Update(c *Config) error {
+	servers := []ServerAndRegexp{}
 	for i, server := range c.Servers {
 		for _, hostname := range server.Names {
 			var host_regexp *regexp.Regexp
@@ -61,22 +87,30 @@ func (c *Config) CreateProxy() (Proxy, error) {
 				host_regexp, err = regexp.Compile("^" + regexp.QuoteMeta(hostname) + "$")
 			}
 			if err != nil {
-				return Proxy{}, err
+				return fmt.Errorf("cannot update proxy due to invalid regex: %v", err)
 			}
 			tuple := ServerAndRegexp{&c.Servers[i], host_regexp}
-			ret.ServerList = append(ret.ServerList, tuple)
+			servers = append(servers, tuple)
 		}
 	}
+	var def *Server
 	for i, server := range c.Servers {
 		if server.Default {
-			ret.Default = &c.Servers[i]
+			def = &c.Servers[i]
 			break
 		}
 	}
-	return ret, nil
+
+	p.Lock.Lock()
+	defer p.Lock.Unlock()
+	p.ServerList = servers
+	p.Default = def
+
+	return nil
 }
 
 func (c *Config) Serve() error {
+	glog.V(1).Infof("Listening on %s:%d", c.Bind.Host, c.Bind.Port)
 	listener, err := net.Listen("tcp", fmt.Sprintf(
 		"%s:%d", c.Bind.Host, c.Bind.Port,
 	))
@@ -84,9 +118,185 @@ func (c *Config) Serve() error {
 		return err
 	}
 
-	server, err := c.CreateProxy()
+	proxy := Proxy{}
+	err = proxy.Update(c)
 	if err != nil {
 		return err
+	}
+
+	if c.Kubernetes != nil {
+		rules := clientcmd.NewDefaultClientConfigLoadingRules()
+		if c.Kubernetes.Kubeconfig != "" {
+			rules.ExplicitPath = c.Kubernetes.Kubeconfig
+		}
+		ccfg := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, &clientcmd.ConfigOverrides{})
+		rcfg, err := ccfg.ClientConfig()
+		if err != nil {
+			return err
+		}
+		extclient := typedv1beta1.NewForConfigOrDie(rcfg)
+		client := corev1.NewForConfigOrDie(rcfg)
+
+		// trigger to update the proxy
+		updateTrigger := make(chan struct{}, 1)
+
+		// watch services
+		services := NotifyingStore{
+			Store: cache.NewStore(cache.MetaNamespaceKeyFunc),
+			NotifyFunc: func() {
+				select {
+				case updateTrigger <- struct{}{}:
+				default:
+				}
+			},
+		}
+		lw := cache.NewListWatchFromClient(client, "services", "", fields.Everything())
+		refl := cache.NewReflector(lw, &apiv1.Service{}, &services, time.Minute)
+		refl.Run()
+
+		// wait until services are ready
+		glog.V(1).Infof("Waiting for service store to be ready")
+		for {
+			if refl.LastSyncResourceVersion() != "" {
+				break
+			}
+			time.Sleep(time.Millisecond * 200)
+		}
+
+		// watch ingresses
+		ingresses := map[string]*extapiv1beta1.Ingress{}
+		lock := sync.Mutex{}
+		class := c.Kubernetes.IngressClass
+		if class == "" {
+			class = "k8sniff"
+		}
+		go func() {
+			for {
+				w, err := extclient.Ingresses("").Watch(api.ListOptions{})
+				if err != nil {
+					glog.Errorf("Ingress watch error: %v", err)
+					// TODO: add backoff logic
+					time.Sleep(time.Second)
+					continue
+				}
+				evs := w.ResultChan()
+
+			EventLoop:
+				for ev := range evs {
+					i := ev.Object.(*extapiv1beta1.Ingress)
+					if i != nil && i.Annotations[ingressClassKey] != class {
+						continue
+					}
+					switch ev.Type {
+					case watch.Added, watch.Modified:
+						glog.V(5).Infof("event %s for %s/%s", ev.Type, i.Namespace, i.Name)
+						lock.Lock()
+						ingresses[i.Namespace+"/"+i.Name] = i
+						lock.Unlock()
+					case watch.Deleted:
+						glog.V(5).Infof("event %s for %s/%s", ev.Type, i.Namespace, i.Name)
+						lock.Lock()
+						delete(ingresses, i.Namespace+"/"+i.Name)
+						lock.Unlock()
+					case watch.Error:
+						if i != nil {
+							glog.V(5).Infof("event %s for %s/%s", ev.Type, i.Namespace, i.Name)
+						}
+						w.Stop()
+						break EventLoop
+					}
+					select {
+					case updateTrigger <- struct{}{}:
+					default:
+					}
+				}
+
+				// TODO: add backoff logic
+				time.Sleep(time.Second)
+			}
+		}()
+
+		go func() {
+			for range updateTrigger {
+				lock.Lock()
+
+				serverForBackend := func(ing *extapiv1beta1.Ingress, backend *extapiv1beta1.IngressBackend) (*Server, error) {
+					obj, found, err := services.GetByKey(fmt.Sprintf("%s/%s", ing.Namespace, backend.ServiceName))
+					if err != nil {
+						return nil, err
+					}
+					if !found {
+						return nil, fmt.Errorf("service %s/%s not found", ing.Namespace, backend.ServiceName)
+					}
+					svc := obj.(*apiv1.Service)
+					var port int
+					if backend.ServicePort.Type == intstr.String {
+						for _, p := range svc.Spec.Ports {
+							if p.Name == backend.ServicePort.StrVal {
+								port = int(p.Port)
+								break
+							}
+						}
+						if port == 0 {
+							return nil, fmt.Errorf("port %q of service %s/%s not found", backend.ServicePort.StrVal, svc.Namespace, svc.Name)
+						}
+					} else {
+						port = int(backend.ServicePort.IntVal)
+					}
+					return &Server{
+						Host: svc.Spec.ClusterIP,
+						// TODO: support string values:
+						Port: port,
+					}, nil
+				}
+
+				c.Servers = []Server{}
+				for _, i := range ingresses {
+					if i.Spec.Backend != nil {
+						s, err := serverForBackend(i, i.Spec.Backend)
+						if err != nil {
+							glog.Errorf("Ingress %s/%s error with default backend, skipping: %v", i.Namespace, i.Name, err)
+						} else {
+							s.Default = true
+							glog.V(4).Infof("Adding default backend -> %s:%d", s.Host, s.Port)
+							c.Servers = append(c.Servers, *s)
+						}
+					}
+					for _, r := range i.Spec.Rules {
+						if r.HTTP == nil {
+							glog.Errorf("Ingress %s/%s error with rule, skipping: http must be set", i.Namespace, i.Name)
+							continue
+						}
+						for _, p := range r.HTTP.Paths {
+							if p.Path != "" && p.Path != "/" {
+								glog.Errorf("Ingress %s/%s error with rule, skipping: %v", i.Namespace, i.Name, err)
+								continue
+							}
+							s, err := serverForBackend(i, &p.Backend)
+							if err != nil {
+								glog.Errorf("Ingress %s/%s error with rule %q path %q, skipping: %v", i.Namespace, i.Name, r.Host, p.Path, err)
+								continue
+							}
+							s.Names = []string{r.Host}
+							glog.V(4).Infof("Adding backend %q -> %s:%d", r.Host, s.Host, s.Port)
+							c.Servers = append(c.Servers, *s)
+						}
+					}
+				}
+				lock.Unlock()
+
+				glog.V(2).Infof("Updating proxy configuration")
+				err := proxy.Update(c)
+				if err != nil {
+					glog.Errorf("Error updating proxy: %v", err)
+					// TODO: add backoff logic
+					time.Sleep(time.Second)
+				} else {
+					glog.V(2).Infof("Proxy configuration update done")
+				}
+
+			}
+		}()
 	}
 
 	for {
@@ -94,36 +304,43 @@ func (c *Config) Serve() error {
 		if err != nil {
 			return err
 		}
-		go server.Handle(conn)
+		glog.V(3).Infof(
+			"%s -> %s",
+			conn.RemoteAddr(),
+			conn.LocalAddr(),
+		)
+		go proxy.Handle(conn)
 	}
 }
 
 func (s *Proxy) Handle(conn net.Conn) {
+	defer conn.Close()
 	data := make([]byte, 4096)
 
 	length, err := conn.Read(data)
 	if err != nil {
-		log.Printf("Error: %s", err)
+		glog.V(4).Infof("Error reading the first 4k of the connection: %s", err)
+		return
 	}
 
 	var proxy *Server
 	hostname, hostname_err := parser.GetHostname(data[:])
 	if hostname_err == nil {
-		log.Printf("Parsed hostname: %s\n", hostname)
+		glog.V(6).Infof("Parsed hostname: %s", hostname)
 
 		proxy = s.Get(hostname)
 		if proxy == nil {
-			log.Printf("No proxy matched %s", hostname)
-			conn.Close()
+			glog.V(4).Infof("No proxy matched %s", hostname)
 			return
+		} else {
+			glog.V(4).Infof("Host found %s", proxy.Host)
 		}
 	} else {
-		log.Printf("Parsed request without hostname")
+		glog.V(6).Info("Parsed request without hostname")
 
 		proxy = s.Default
 		if proxy == nil {
-			log.Printf("No default proxy")
-			conn.Close()
+			glog.V(4).Info("No default proxy")
 			return
 		}
 	}
@@ -132,25 +349,21 @@ func (s *Proxy) Handle(conn net.Conn) {
 		"%s:%d", proxy.Host, proxy.Port,
 	))
 	if err != nil {
-		log.Printf("Error: %s", err)
-		conn.Close()
+		glog.Warningf("Error connecting to backend: %s", err)
 		return
 	}
+	defer clientConn.Close()
 	n, err := clientConn.Write(data[:length])
-	log.Printf("Wrote %d bytes\n", n)
+	glog.V(7).Infof("Wrote %d bytes", n)
 	if err != nil {
-		log.Printf("Error: %s", err)
-		conn.Close()
+		glog.V(7).Infof("Error sending data to backend: %s", err)
 		clientConn.Close()
 	}
 	Copycat(clientConn, conn)
 }
 
 func Copycat(client, server net.Conn) {
-	defer client.Close()
-	defer server.Close()
-
-	log.Printf("Entering copy routine\n")
+	glog.V(6).Info("Entering copy routine")
 
 	doCopy := func(s, c net.Conn, cancel chan<- bool) {
 		io.Copy(s, c)
@@ -164,7 +377,7 @@ func Copycat(client, server net.Conn) {
 
 	select {
 	case <-cancel:
-		log.Printf("Disconnect\n")
+		glog.V(6).Info("Disconnected")
 		return
 	}
 

@@ -25,12 +25,12 @@ import (
 )
 
 func main() {
-	var sniffConfig string
+	var k8sniffConfig string
 
-	flag.StringVar(&sniffConfig, "config", "sniff.json", "Config")
+	flag.StringVar(&k8sniffConfig, "config", "k8sniff.json", "Config")
 	flag.Parse()
 
-	config, err := LoadConfig(sniffConfig)
+	config, err := LoadConfig(k8sniffConfig)
 	if err != nil {
 		panic(err)
 	}
