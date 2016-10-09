@@ -1,10 +1,11 @@
 k8sniff - tcp ingress controller with SNI support
 =====
 
+[![wercker status](https://app.wercker.com/status/ac5c6d5635b92a47291ea6911b6aeb07/s/master "wercker status")](https://app.wercker.com/project/byKey/ac5c6d5635b92a47291ea6911b6aeb07) 
+
 K8SNIff is a small ingress server that will accept incoming TLS connections, and parse
 TLS Client Hello messages for the SNI Extension. If one is found, we'll go
 ahead and forward that connection to a Kubernetes service.
-
 
 sniff config
 ------------
