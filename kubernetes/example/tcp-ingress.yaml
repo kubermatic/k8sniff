@@ -3,7 +3,7 @@ kind: Ingress
 metadata:
   name: tcp
   annotations:
-    kubernetes.io/ingress.class: sniff
+    kubernetes.io/ingress.class: k8sniff
 spec:
   backend:
     serviceName: bar
