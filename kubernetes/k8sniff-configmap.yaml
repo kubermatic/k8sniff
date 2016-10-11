@@ -4,7 +4,7 @@ metadata:
   name: k8sniff-configmap
   namespace: k8sniff
 data:
-  sniff.json: |
+  k8sniff.json: |
     {
         "bind": {
             "host": "0.0.0.0",
