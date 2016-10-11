@@ -34,10 +34,10 @@ func main() {
 	flag.Parse()
 	glog.V(5).Infof("Read config: %+v", k8sniffConfig)
 	config, err := LoadConfig(k8sniffConfig)
-	config.Kubernetes.Kubeconfig = kubeconfig
 	if err != nil {
 		panic(err)
 	}
+	config.Kubernetes.Kubeconfig = kubeconfig
 
 	panic(config.Serve())
 }
