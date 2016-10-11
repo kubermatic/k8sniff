@@ -31,13 +31,7 @@ spec:
         - name: k8sniff-config
           mountPath: /etc/config
           readOnly: true
-        # - name: kubeconfig
-        #   mountPath: /root/.kube
-        #   readOnly: true
       volumes:
-        # - name: kubeconfig
-        #   secret:
-        #     secretName: kubeconfig
         - name: k8sniff-config
           configMap:
             name: k8sniff-configmap
