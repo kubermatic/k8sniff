@@ -24,6 +24,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+
+	"github.com/golang/glog"
 )
 
 type Config struct {
@@ -51,6 +53,8 @@ type Server struct {
 }
 
 func LoadConfig(path string) (*Config, error) {
+	glog.V(5).Infof("Loading config from: %s", path)
+
 	fd, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -60,6 +64,8 @@ func LoadConfig(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	glog.V(5).Infof("Read config: %+v", config)
 
 	if len(config.Servers) > 0 && config.Kubernetes != nil {
 		return nil, fmt.Errorf("Cannot set .Servers and .Kubernetes in config file")

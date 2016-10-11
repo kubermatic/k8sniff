@@ -22,8 +22,6 @@ package main
 
 import (
 	"flag"
-
-	"github.com/golang/glog"
 )
 
 func main() {
@@ -32,7 +30,7 @@ func main() {
 	flag.StringVar(&k8sniffConfig, "config", "k8sniff.json", "Config")
 	flag.StringVar(&kubeconfig, "kubeconfig", "", "absolute path to the kubeconfig file")
 	flag.Parse()
-	glog.V(5).Infof("Read config: %+v", k8sniffConfig)
+
 	config, err := LoadConfig(k8sniffConfig)
 	if err != nil {
 		panic(err)
