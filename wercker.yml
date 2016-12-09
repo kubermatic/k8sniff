@@ -10,6 +10,14 @@ build:
           go version
           go get
           git describe --tags |tee VERSION
+          go get -u github.com/Masterminds/glide
+    - script:
+        name: install dependencies
+        code: |
+          GLIDE_HOME="$WERCKER_CACHE_DIR/glide/"
+          echo "GLIDE_HOME = $GLIDE_HOME"
+          mkdir -p $GLIDE_HOME
+          glide --home $GLIDE_HOME install --strip-vendor
     # Statically build the project
     - script:
         name: go build
