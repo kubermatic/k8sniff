@@ -22,16 +22,25 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
+	"sync"
+	"errors"
 
 	"github.com/golang/glog"
+	"k8s.io/client-go/tools/cache"
 )
 
 type Config struct {
 	Bind       Bind
 	Servers    []Server
 	Kubernetes *Kubernetes
+	proxy      *Proxy
+	lock       sync.Mutex
+
+	serviceController *cache.Controller
+	serviceStore      cache.Store
+	ingressController *cache.Controller
+	ingressStore      cache.Store
 }
 
 type Kubernetes struct {
@@ -68,7 +77,7 @@ func LoadConfig(path string) (*Config, error) {
 	glog.V(5).Infof("Read config: %+v", config)
 
 	if len(config.Servers) > 0 && config.Kubernetes != nil {
-		return nil, fmt.Errorf("Cannot set .Servers and .Kubernetes in config file")
+		return nil, errors.New("Cannot set .Servers and .Kubernetes in config file")
 	}
 
 	return &config, err
