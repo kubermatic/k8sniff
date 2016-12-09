@@ -249,17 +249,26 @@ func (c *Config) Serve() error {
 				AddFunc: func(obj interface{}) {
 					i := obj.(*v1beta1.Ingress)
 					glog.V(4).Infof("Adding ingress %s/%s", i.Namespace, i.Name)
-					c.UpdateServers()
+					err := c.UpdateServers()
+					if err != nil {
+						glog.Errorf("failed to update servers list after adding ingress %s: %v", i.Name, err)
+					}
 				},
 				UpdateFunc: func(old, cur interface{}) {
 					i := cur.(*v1beta1.Ingress)
 					glog.V(4).Infof("Updating ingress %s/%s", i.Namespace, i.Name)
-					c.UpdateServers()
+					err := c.UpdateServers()
+					if err != nil {
+						glog.Errorf("failed to update servers list after updating ingress %s: %v", i.Name, err)
+					}
 				},
 				DeleteFunc: func(obj interface{}) {
 					i := obj.(*v1beta1.Ingress)
 					glog.V(4).Infof("Deleting ingress %s/%s", i.Namespace, i.Name)
-					c.UpdateServers()
+					err := c.UpdateServers()
+					if err != nil {
+						glog.Errorf("failed to update servers list after deleting ingress %s: %v", i.Name, err)
+					}
 				},
 			},
 		)
@@ -279,17 +288,26 @@ func (c *Config) Serve() error {
 				AddFunc: func(obj interface{}) {
 					s := obj.(*v1.Service)
 					glog.V(4).Infof("Adding service %q", s.Name)
-					c.UpdateServers()
+					err := c.UpdateServers()
+					if err != nil {
+						glog.Errorf("failed to update servers list after adding service %s: %v", s.Name, err)
+					}
 				},
 				UpdateFunc: func(old, cur interface{}) {
 					s := cur.(*v1.Service)
 					glog.V(4).Infof("Updating service %q", s.Name)
-					c.UpdateServers()
+					err := c.UpdateServers()
+					if err != nil {
+						glog.Errorf("failed to update servers list after updating service %s: %v", s.Namespace, err)
+					}
 				},
 				DeleteFunc: func(obj interface{}) {
 					s := obj.(*v1.Service)
 					glog.V(4).Infof("Deleting service %q", s.Name)
-					c.UpdateServers()
+					err := c.UpdateServers()
+					if err != nil {
+						glog.Errorf("failed to update servers list after deleting service %s: %v", s.Name, err)
+					}
 				},
 			},
 		)
