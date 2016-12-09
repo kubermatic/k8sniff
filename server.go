@@ -31,16 +31,18 @@ import (
 	"github.com/golang/glog"
 	"github.com/kubermatic/k8sniff/parser"
 
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/pkg/api/v1"
 	"k8s.io/client-go/pkg/apis/extensions/v1beta1"
-	"k8s.io/client-go/pkg/watch"
-	"k8s.io/client-go/pkg/util/intstr"
 	"k8s.io/client-go/pkg/runtime"
+	"k8s.io/client-go/pkg/util/intstr"
 	"k8s.io/client-go/pkg/util/wait"
+	"k8s.io/client-go/pkg/watch"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/tools/clientcmd"
+	"strconv"
+	"strings"
 )
 
 const (
@@ -48,6 +50,7 @@ const (
 	// only processes Ingresses with this annotation either unset, or set
 	// to either nginxIngressClass or the empty string.
 	ingressClassKey = "kubernetes.io/ingress.class"
+	proxyClassKey   = "kubernetes.io/k8sniff-tcp-proxy-port"
 )
 
 type ServerAndRegexp struct {
@@ -61,16 +64,40 @@ type Proxy struct {
 	Default    *Server
 }
 
-func (c *Proxy) Get(host string) *Server {
-	c.Lock.RLock()
-	defer c.Lock.RUnlock()
+type PortProxy struct {
+	Lock    sync.RWMutex
+	Ports   map[int]string
+	Default *Server
+}
 
-	for _, tuple := range c.ServerList {
+func (p *PortProxy) Update(c *Config) {
+	ports := make(map[int]string)
+	for _, port := range c.Ports {
+		ports[port.Port] = port.TargetHost
+	}
+	p.Lock.Lock()
+	defer p.Lock.Unlock()
+	p.Ports = ports
+}
+
+func (p *PortProxy) Get(port int) string {
+	p.Lock.RLock()
+	defer p.Lock.RUnlock()
+
+	host, _ := p.Ports[port]
+	return host
+}
+
+func (p *Proxy) Get(host string) *Server {
+	p.Lock.RLock()
+	defer p.Lock.RUnlock()
+
+	for _, tuple := range p.ServerList {
 		if tuple.Regexp.MatchString(host) {
 			return tuple.Server
 		}
 	}
-	return c.Default
+	return p.Default
 }
 
 func (p *Proxy) Update(c *Config) error {
@@ -104,6 +131,25 @@ func (p *Proxy) Update(c *Config) error {
 	p.ServerList = servers
 	p.Default = def
 
+	return nil
+}
+
+func (c *Config) UpdatePorts() error {
+	services := c.serviceStore.List()
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	for _, service := range services {
+		service := service.(*v1.Service)
+		if port, found := service.Annotations[proxyClassKey]; found {
+			glog.V(4).Infof("Adding port %s to portProxy for service %s/%s", port, service.Namespace, service.Name)
+			port, _ := strconv.Atoi(port)
+			c.Ports = append(c.Ports, ProxyPort{TargetHost: service.Spec.ClusterIP, Port: port})
+		}
+	}
+
+	glog.V(2).Infof("Updating portProxy configuration")
+	c.portProxy.Update(c)
+	glog.V(2).Infof("PortProxy configuration update done")
 	return nil
 }
 
@@ -200,20 +246,41 @@ func (c *Config) UpdateServers() error {
 	return nil
 }
 
+func (c *Config) GetListener() []net.Listener {
+	return nil
+}
+
+func (c *Config) Debug() {
+	for {
+		time.Sleep(1 * time.Minute)
+
+		glog.V(2).Info("==============================================================================")
+		glog.V(2).Info("")
+		glog.V(2).Info("Configured backends:")
+		for _, s := range c.proxy.ServerList {
+			glog.V(2).Infof("%s -> %s", strings.Join(s.Server.Names, ","), s.Server.Host)
+		}
+		glog.V(2).Info("")
+		glog.V(2).Info("Configured ports:")
+		for port, target := range c.portProxy.Ports {
+			glog.V(2).Infof(":%d -> %s:%d", port, target, port)
+		}
+		glog.V(2).Info("")
+		glog.V(2).Info("==============================================================================")
+	}
+}
+
 func (c *Config) Serve() error {
 	glog.V(1).Infof("Listening on %s:%d", c.Bind.Host, c.Bind.Port)
-	listener, err := net.Listen("tcp", fmt.Sprintf(
-		"%s:%d", c.Bind.Host, c.Bind.Port,
-	))
+
+	c.proxy = &Proxy{}
+	err := c.proxy.Update(c)
 	if err != nil {
 		return err
 	}
 
-	c.proxy = &Proxy{}
-	err = c.proxy.Update(c)
-	if err != nil {
-		return err
-	}
+	c.portProxy = &PortProxy{}
+	c.portProxy.Update(c)
 
 	if c.Kubernetes != nil {
 		var rcfg *rest.Config
@@ -244,11 +311,10 @@ func (c *Config) Serve() error {
 				},
 			},
 			&v1beta1.Ingress{},
-			5 * time.Minute,
+			5*time.Minute,
 			cache.ResourceEventHandlerFuncs{
 				AddFunc: func(obj interface{}) {
 					i := obj.(*v1beta1.Ingress)
-					glog.V(4).Infof("Adding ingress %s/%s", i.Namespace, i.Name)
 					err := c.UpdateServers()
 					if err != nil {
 						glog.Errorf("failed to update servers list after adding ingress %s: %v", i.Name, err)
@@ -256,7 +322,6 @@ func (c *Config) Serve() error {
 				},
 				UpdateFunc: func(old, cur interface{}) {
 					i := cur.(*v1beta1.Ingress)
-					glog.V(4).Infof("Updating ingress %s/%s", i.Namespace, i.Name)
 					err := c.UpdateServers()
 					if err != nil {
 						glog.Errorf("failed to update servers list after updating ingress %s: %v", i.Name, err)
@@ -264,7 +329,6 @@ func (c *Config) Serve() error {
 				},
 				DeleteFunc: func(obj interface{}) {
 					i := obj.(*v1beta1.Ingress)
-					glog.V(4).Infof("Deleting ingress %s/%s", i.Namespace, i.Name)
 					err := c.UpdateServers()
 					if err != nil {
 						glog.Errorf("failed to update servers list after deleting ingress %s: %v", i.Name, err)
@@ -283,31 +347,31 @@ func (c *Config) Serve() error {
 				},
 			},
 			&v1.Service{},
-			5 * time.Minute,
+			5*time.Minute,
 			cache.ResourceEventHandlerFuncs{
 				AddFunc: func(obj interface{}) {
 					s := obj.(*v1.Service)
-					glog.V(4).Infof("Adding service %q", s.Name)
 					err := c.UpdateServers()
 					if err != nil {
 						glog.Errorf("failed to update servers list after adding service %s: %v", s.Name, err)
 					}
+					c.UpdatePorts()
 				},
 				UpdateFunc: func(old, cur interface{}) {
 					s := cur.(*v1.Service)
-					glog.V(4).Infof("Updating service %q", s.Name)
 					err := c.UpdateServers()
 					if err != nil {
 						glog.Errorf("failed to update servers list after updating service %s: %v", s.Namespace, err)
 					}
+					c.UpdatePorts()
 				},
 				DeleteFunc: func(obj interface{}) {
 					s := obj.(*v1.Service)
-					glog.V(4).Infof("Deleting service %q", s.Name)
 					err := c.UpdateServers()
 					if err != nil {
 						glog.Errorf("failed to update servers list after deleting service %s: %v", s.Name, err)
 					}
+					c.UpdatePorts()
 				},
 			},
 		)
@@ -325,6 +389,50 @@ func (c *Config) Serve() error {
 		go c.ingressController.Run(wait.NeverStop)
 	}
 
+	go c.Debug()
+
+	//Port proxy
+	r := strings.Split(c.Bind.PortProxyRange, "-")
+	min, err := strconv.Atoi(r[0])
+	if err != nil {
+		return fmt.Errorf("failed to parse port range: %v", err)
+	}
+	max, err := strconv.Atoi(r[1])
+	if err != nil {
+		return fmt.Errorf("failed to parse port range: %v", err)
+	}
+
+	for i := min; i <= max; i++ {
+		listener, err := net.Listen("tcp", fmt.Sprintf(
+			"%s:%d", c.Bind.Host, i,
+		))
+		if err != nil {
+			return err
+		}
+		go func() {
+			for {
+				conn, err := listener.Accept()
+				if err != nil {
+					glog.Error(err)
+					return
+				}
+				glog.V(3).Infof(
+					"%s -> %s",
+					conn.RemoteAddr(),
+					conn.LocalAddr(),
+				)
+				go c.portProxy.Handle(conn)
+			}
+		}()
+	}
+
+	// Normal proxy
+	listener, err := net.Listen("tcp", fmt.Sprintf(
+		"%s:%d", c.Bind.Host, c.Bind.Port,
+	))
+	if err != nil {
+		return err
+	}
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -337,6 +445,8 @@ func (c *Config) Serve() error {
 		)
 		go c.proxy.Handle(conn)
 	}
+
+	return nil
 }
 
 func (s *Proxy) Handle(conn net.Conn) {
@@ -386,6 +496,41 @@ func (s *Proxy) Handle(conn net.Conn) {
 		clientConn.Close()
 	}
 	Copycat(clientConn, conn)
+}
+
+func (p *PortProxy) Handle(conn net.Conn) {
+	defer conn.Close()
+	data := make([]byte, 4096)
+
+	length, err := conn.Read(data)
+	if err != nil {
+		glog.V(4).Infof("Error reading the first 4k of the connection: %s", err)
+		return
+	}
+
+	s := strings.Split(conn.LocalAddr().String(), ":")
+	port, _ := strconv.Atoi(s[1])
+
+	if target, found := p.Ports[port]; found {
+		glog.V(2).Infof("proxy request to %s:%d", target, port)
+
+		clientConn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", target, port))
+		if err != nil {
+			glog.Warningf("Error connecting to service: %s", err)
+			return
+		}
+		defer clientConn.Close()
+		n, err := clientConn.Write(data[:length])
+		glog.V(7).Infof("Wrote %d bytes", n)
+		if err != nil {
+			glog.V(7).Infof("Error sending data to backend: %s", err)
+			clientConn.Close()
+		}
+		Copycat(clientConn, conn)
+
+	} else {
+		glog.Errorf("no service found for port %d", port)
+	}
 }
 
 func Copycat(client, server net.Conn) {

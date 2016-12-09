@@ -22,9 +22,9 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"sync"
-	"errors"
 
 	"github.com/golang/glog"
 	"k8s.io/client-go/tools/cache"
@@ -33,8 +33,10 @@ import (
 type Config struct {
 	Bind       Bind
 	Servers    []Server
+	Ports      []ProxyPort
 	Kubernetes *Kubernetes
 	proxy      *Proxy
+	portProxy  *PortProxy
 	lock       sync.Mutex
 
 	serviceController *cache.Controller
@@ -49,8 +51,14 @@ type Kubernetes struct {
 }
 
 type Bind struct {
-	Host string
-	Port int
+	Host           string
+	Port           int
+	PortProxyRange string
+}
+
+type ProxyPort struct {
+	Port       int
+	TargetHost string
 }
 
 type Server struct {
