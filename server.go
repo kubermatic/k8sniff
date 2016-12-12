@@ -31,16 +31,13 @@ import (
 	"github.com/golang/glog"
 	"github.com/kubermatic/k8sniff/parser"
 
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/pkg/api/v1"
 	"k8s.io/client-go/pkg/apis/extensions/v1beta1"
 	"k8s.io/client-go/pkg/runtime"
 	"k8s.io/client-go/pkg/util/intstr"
 	"k8s.io/client-go/pkg/util/wait"
 	"k8s.io/client-go/pkg/watch"
-	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
-	"k8s.io/client-go/tools/clientcmd"
 	"strconv"
 	"strings"
 )
@@ -270,6 +267,48 @@ func (c *Config) Debug() {
 	}
 }
 
+func (c *Config) UpdateService() {
+	c.portProxy.Lock.Lock()
+	defer c.portProxy.Lock.Unlock()
+
+	svc, err := c.Kubernetes.Client.Services("k8sniff").Get("k8sniff-ingress-lb")
+	if err != nil {
+		glog.Errorf("Own service not found.")
+		return
+	}
+
+	updated := false
+	for ppPort := range c.portProxy.Ports {
+		existInSvc := false
+		for _, sp := range svc.Spec.Ports {
+			if sp.Port == int32(ppPort) {
+				existInSvc = true
+				break
+			}
+		}
+		if !existInSvc {
+			np := v1.ServicePort{
+				Name:       fmt.Sprintf("tcp-proxy-%d", ppPort),
+				Protocol:   v1.ProtocolTCP,
+				Port:       int32(ppPort),
+				TargetPort: intstr.IntOrString{IntVal: int32(ppPort)},
+			}
+			svc.Spec.Ports = append(svc.Spec.Ports, np)
+			updated = true
+			glog.V(2).Infof("Exposing port %d", ppPort)
+		}
+	}
+
+	if updated {
+		_, err = c.Kubernetes.Client.Services("k8sniff").Update(svc)
+		if err != nil {
+			glog.Errorf("Unable to save service during port update: %v", err)
+		} else {
+			glog.V(2).Info("Updated own service ports")
+		}
+	}
+}
+
 func (c *Config) Serve() error {
 	glog.V(1).Infof("Listening on %s:%d", c.Bind.Host, c.Bind.Port)
 
@@ -282,32 +321,14 @@ func (c *Config) Serve() error {
 	c.portProxy = &PortProxy{}
 	c.portProxy.Update(c)
 
-	if c.Kubernetes != nil {
-		var rcfg *rest.Config
-		var err error
-		if c.Kubernetes.Kubeconfig != "" {
-			// uses the current context in kubeconfig
-			rcfg, err = clientcmd.BuildConfigFromFlags("", c.Kubernetes.Kubeconfig)
-			if err != nil {
-				panic(err.Error())
-			}
-		} else {
-			// creates the in-cluster config
-			rcfg, err = rest.InClusterConfig()
-			if err != nil {
-				panic(err.Error())
-			}
-		}
-
-		client := kubernetes.NewForConfigOrDie(rcfg)
-
+	if c.Kubernetes != nil && c.Kubernetes.Client != nil {
 		c.ingressStore, c.ingressController = cache.NewInformer(
 			&cache.ListWatch{
 				ListFunc: func(options v1.ListOptions) (runtime.Object, error) {
-					return client.Extensions().Ingresses(v1.NamespaceAll).List(options)
+					return c.Kubernetes.Client.Extensions().Ingresses(v1.NamespaceAll).List(options)
 				},
 				WatchFunc: func(options v1.ListOptions) (watch.Interface, error) {
-					return client.Extensions().Ingresses(v1.NamespaceAll).Watch(options)
+					return c.Kubernetes.Client.Extensions().Ingresses(v1.NamespaceAll).Watch(options)
 				},
 			},
 			&v1beta1.Ingress{},
@@ -340,10 +361,10 @@ func (c *Config) Serve() error {
 		c.serviceStore, c.serviceController = cache.NewInformer(
 			&cache.ListWatch{
 				ListFunc: func(options v1.ListOptions) (runtime.Object, error) {
-					return client.Services(v1.NamespaceAll).List(options)
+					return c.Kubernetes.Client.Services(v1.NamespaceAll).List(options)
 				},
 				WatchFunc: func(options v1.ListOptions) (watch.Interface, error) {
-					return client.Services(v1.NamespaceAll).Watch(options)
+					return c.Kubernetes.Client.Services(v1.NamespaceAll).Watch(options)
 				},
 			},
 			&v1.Service{},
@@ -390,6 +411,7 @@ func (c *Config) Serve() error {
 	}
 
 	go c.Debug()
+	wait.Forever(c.UpdateService, 5*time.Second)
 
 	//Port proxy
 	r := strings.Split(c.Bind.PortProxyRange, "-")
@@ -500,13 +522,6 @@ func (s *Proxy) Handle(conn net.Conn) {
 
 func (p *PortProxy) Handle(conn net.Conn) {
 	defer conn.Close()
-	data := make([]byte, 4096)
-
-	length, err := conn.Read(data)
-	if err != nil {
-		glog.V(4).Infof("Error reading the first 4k of the connection: %s", err)
-		return
-	}
 
 	s := strings.Split(conn.LocalAddr().String(), ":")
 	port, _ := strconv.Atoi(s[1])
@@ -520,12 +535,6 @@ func (p *PortProxy) Handle(conn net.Conn) {
 			return
 		}
 		defer clientConn.Close()
-		n, err := clientConn.Write(data[:length])
-		glog.V(7).Infof("Wrote %d bytes", n)
-		if err != nil {
-			glog.V(7).Infof("Error sending data to backend: %s", err)
-			clientConn.Close()
-		}
 		Copycat(clientConn, conn)
 
 	} else {

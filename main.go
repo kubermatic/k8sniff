@@ -22,6 +22,9 @@ package main
 
 import (
 	"flag"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/kubernetes"
 )
 
 func main() {
@@ -36,6 +39,22 @@ func main() {
 		panic(err)
 	}
 	config.Kubernetes.Kubeconfig = kubeconfig
+
+	var cfg *rest.Config
+	if config.Kubernetes.Kubeconfig != "" {
+		// uses the current context in kubeconfig
+		cfg, err = clientcmd.BuildConfigFromFlags("", config.Kubernetes.Kubeconfig)
+		if err != nil {
+			panic(err.Error())
+		}
+	} else {
+		// creates the in-cluster config
+		cfg, err = rest.InClusterConfig()
+		if err != nil {
+			panic(err.Error())
+		}
+	}
+	config.Kubernetes.Client = kubernetes.NewForConfigOrDie(cfg)
 
 	panic(config.Serve())
 }

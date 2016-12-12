@@ -27,6 +27,7 @@ import (
 	"sync"
 
 	"github.com/golang/glog"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 )
 
@@ -48,6 +49,7 @@ type Config struct {
 type Kubernetes struct {
 	Kubeconfig   string
 	IngressClass string
+	Client       *kubernetes.Clientset
 }
 
 type Bind struct {
