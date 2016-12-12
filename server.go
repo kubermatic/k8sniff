@@ -248,23 +248,19 @@ func (c *Config) GetListener() []net.Listener {
 }
 
 func (c *Config) Debug() {
-	for {
-		time.Sleep(1 * time.Minute)
-
-		glog.V(2).Info("==============================================================================")
-		glog.V(2).Info("")
-		glog.V(2).Info("Configured backends:")
-		for _, s := range c.proxy.ServerList {
-			glog.V(2).Infof("%s -> %s", strings.Join(s.Server.Names, ","), s.Server.Host)
-		}
-		glog.V(2).Info("")
-		glog.V(2).Info("Configured ports:")
-		for port, target := range c.portProxy.Ports {
-			glog.V(2).Infof(":%d -> %s:%d", port, target, port)
-		}
-		glog.V(2).Info("")
-		glog.V(2).Info("==============================================================================")
+	glog.V(2).Info("==============================================================================")
+	glog.V(2).Info("")
+	glog.V(2).Info("Configured backends:")
+	for _, s := range c.proxy.ServerList {
+		glog.V(2).Infof("%s -> %s", strings.Join(s.Server.Names, ","), s.Server.Host)
 	}
+	glog.V(2).Info("")
+	glog.V(2).Info("Configured ports:")
+	for port, target := range c.portProxy.Ports {
+		glog.V(2).Infof(":%d -> %s:%d", port, target, port)
+	}
+	glog.V(2).Info("")
+	glog.V(2).Info("==============================================================================")
 }
 
 func (c *Config) UpdateService() {
@@ -410,8 +406,8 @@ func (c *Config) Serve() error {
 		go c.ingressController.Run(wait.NeverStop)
 	}
 
-	go c.Debug()
-	wait.Forever(c.UpdateService, 5*time.Second)
+	go wait.Forever(c.Debug, 30*time.Second)
+	go wait.Forever(c.UpdateService, 5*time.Second)
 
 	//Port proxy
 	r := strings.Split(c.Bind.PortProxyRange, "-")
