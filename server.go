@@ -31,16 +31,16 @@ import (
 	"github.com/golang/glog"
 	"github.com/kubermatic/k8sniff/parser"
 
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/pkg/api/v1"
 	"k8s.io/client-go/pkg/apis/extensions/v1beta1"
-	"k8s.io/client-go/pkg/watch"
-	"k8s.io/client-go/pkg/util/intstr"
 	"k8s.io/client-go/pkg/runtime"
+	"k8s.io/client-go/pkg/util/intstr"
 	"k8s.io/client-go/pkg/util/wait"
+	"k8s.io/client-go/pkg/watch"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 const (
@@ -75,7 +75,8 @@ func (c *Proxy) Get(host string) *Server {
 
 func (p *Proxy) Update(c *Config) error {
 	servers := []ServerAndRegexp{}
-	for i, server := range c.Servers {
+	currentServers := c.CurrentServers()
+	for i, server := range currentServers {
 		for _, hostname := range server.Names {
 			var host_regexp *regexp.Regexp
 			var err error
@@ -87,14 +88,14 @@ func (p *Proxy) Update(c *Config) error {
 			if err != nil {
 				return fmt.Errorf("cannot update proxy due to invalid regex: %v", err)
 			}
-			tuple := ServerAndRegexp{&c.Servers[i], host_regexp}
+			tuple := ServerAndRegexp{&currentServers[i], host_regexp}
 			servers = append(servers, tuple)
 		}
 	}
 	var def *Server
-	for i, server := range c.Servers {
+	for i, server := range currentServers {
 		if server.Default {
-			def = &c.Servers[i]
+			def = &currentServers[i]
 			break
 		}
 	}
@@ -200,6 +201,19 @@ func (c *Config) UpdateServers() error {
 	return nil
 }
 
+// gets a point in time copy for reading to prevent race conditions when reading and updating server list
+func (c *Config) CurrentServers() []Server {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
+	copyOfServers := make([]Server, len(c.Servers))
+	for i := range c.Servers {
+		copyOfServers[i] = c.Servers[i]
+	}
+
+	return copyOfServers
+}
+
 func (c *Config) Serve() error {
 	glog.V(1).Infof("Listening on %s:%d", c.Bind.Host, c.Bind.Port)
 	listener, err := net.Listen("tcp", fmt.Sprintf(
@@ -244,7 +258,7 @@ func (c *Config) Serve() error {
 				},
 			},
 			&v1beta1.Ingress{},
-			5 * time.Minute,
+			5*time.Minute,
 			cache.ResourceEventHandlerFuncs{
 				AddFunc: func(obj interface{}) {
 					i := obj.(*v1beta1.Ingress)
@@ -283,7 +297,7 @@ func (c *Config) Serve() error {
 				},
 			},
 			&v1.Service{},
-			5 * time.Minute,
+			5*time.Minute,
 			cache.ResourceEventHandlerFuncs{
 				AddFunc: func(obj interface{}) {
 					s := obj.(*v1.Service)

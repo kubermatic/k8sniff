@@ -1,5 +1,13 @@
 # The container definition we want to use for developing our app
 box: golang:1.7
+dev:
+  steps:
+    - script:
+        name: install goimports
+        code: |
+          go get -u golang.org/x/tools/cmd/goimports
+    - internal/shell:
+      code:
 build:
   steps:
     - setup-go-workspace:
@@ -8,8 +16,6 @@ build:
         name: install go tools
         code: |
           go version
-          go get
-          git describe --tags |tee VERSION
           go get -u github.com/Masterminds/glide
     - script:
         name: install dependencies
