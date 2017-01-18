@@ -22,9 +22,9 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"sync"
-	"errors"
 
 	"github.com/golang/glog"
 	"k8s.io/client-go/tools/cache"

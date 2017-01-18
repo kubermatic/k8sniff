@@ -31,16 +31,16 @@ import (
 	"github.com/golang/glog"
 	"github.com/kubermatic/k8sniff/parser"
 
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/pkg/api/v1"
 	"k8s.io/client-go/pkg/apis/extensions/v1beta1"
-	"k8s.io/client-go/pkg/watch"
-	"k8s.io/client-go/pkg/util/intstr"
 	"k8s.io/client-go/pkg/runtime"
+	"k8s.io/client-go/pkg/util/intstr"
 	"k8s.io/client-go/pkg/util/wait"
+	"k8s.io/client-go/pkg/watch"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 const (
@@ -244,7 +244,7 @@ func (c *Config) Serve() error {
 				},
 			},
 			&v1beta1.Ingress{},
-			5 * time.Minute,
+			5*time.Minute,
 			cache.ResourceEventHandlerFuncs{
 				AddFunc: func(obj interface{}) {
 					i := obj.(*v1beta1.Ingress)
@@ -283,7 +283,7 @@ func (c *Config) Serve() error {
 				},
 			},
 			&v1.Service{},
-			5 * time.Minute,
+			5*time.Minute,
 			cache.ResourceEventHandlerFuncs{
 				AddFunc: func(obj interface{}) {
 					s := obj.(*v1.Service)
