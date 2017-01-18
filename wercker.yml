@@ -8,8 +8,6 @@ build:
         name: install go tools
         code: |
           go version
-          go get
-          git describe --tags |tee VERSION
           go get -u github.com/Masterminds/glide
     - script:
         name: install dependencies
