@@ -1,5 +1,13 @@
 # The container definition we want to use for developing our app
 box: golang:1.7
+dev:
+  steps:
+    - script:
+        name: install goimports
+        code: |
+          go get -u golang.org/x/tools/cmd/goimports
+    - internal/shell:
+      code:
 build:
   steps:
     - setup-go-workspace:
