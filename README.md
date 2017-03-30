@@ -1,4 +1,4 @@
-![K8SNIff](/logo/logo.png "K8SNIff")
+<img src="/logo/logo.png" alt="K8SNIff" style="width: 300px;"/>
 
 K8SNIff - tcp ingress controller with SNI support
 =====
