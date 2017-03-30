@@ -1,4 +1,4 @@
-<img src="/logo/logo.png" alt="K8SNIff" style="width: 300px;"/>
+<img src="/logo/logo.png" alt="K8SNIff" width="50%"/>
 
 K8SNIff - tcp ingress controller with SNI support
 =====
