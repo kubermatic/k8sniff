@@ -346,10 +346,11 @@ func (c *Config) Serve() error {
 
 	for {
 		conn, err := listener.Accept()
-		start := now()
 		if err != nil {
 			return err
 		}
+		start := now()
+		metrics.IncConnections()
 		glog.V(3).Infof(
 			"%s -> %s",
 			conn.RemoteAddr(),
