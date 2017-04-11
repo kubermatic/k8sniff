@@ -23,6 +23,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"sync"
 
@@ -32,6 +33,7 @@ import (
 
 type Config struct {
 	Bind       Bind
+	Metrics    Metrics
 	Servers    []Server
 	Kubernetes *Kubernetes
 	proxy      *Proxy
@@ -43,9 +45,34 @@ type Config struct {
 	ingressStore      cache.Store
 }
 
+// Valid returns an if the config is invalid
+func (c Config) Valid() error {
+	if err := c.Metrics.Valid(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 type Kubernetes struct {
 	Kubeconfig   string
 	IngressClass string
+}
+
+// Metrics contains the port & path for the
+// prometheus endpoint
+type Metrics struct {
+	Path string
+	Port int
+}
+
+// Valid returns an error if the metrics config is invalid
+func (m Metrics) Valid() error {
+	if m.Port > 65535 {
+		return fmt.Errorf("Configured metrics port is above 65535: port=%d", m.Port)
+	}
+
+	return nil
 }
 
 type Bind struct {
