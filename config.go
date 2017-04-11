@@ -66,8 +66,8 @@ type Kubernetes struct {
 // Metrics contains the port & path for the
 // prometheus endpoint
 type Metrics struct {
+	Bind
 	Path string
-	Port int
 }
 
 // Valid returns an error if the metrics config is invalid
