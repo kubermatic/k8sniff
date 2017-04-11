@@ -31,6 +31,10 @@ import (
 	"k8s.io/client-go/tools/cache"
 )
 
+const (
+	maxTCPPort = 65535
+)
+
 type Config struct {
 	Bind       Bind
 	Metrics    Metrics
@@ -72,7 +76,7 @@ type Metrics struct {
 
 // Valid returns an error if the metrics config is invalid
 func (m Metrics) Valid() error {
-	if m.Port > 65535 {
+	if m.Port > maxTCPPort {
 		return fmt.Errorf("Configured metrics port is above 65535: port=%d", m.Port)
 	}
 
