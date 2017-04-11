@@ -47,6 +47,10 @@ type Config struct {
 
 // Valid returns an if the config is invalid
 func (c Config) Valid() error {
+	if len(c.Servers) > 0 && c.Kubernetes != nil {
+		return errors.New("Cannot set .Servers and .Kubernetes in config file")
+	}
+
 	if err := c.Metrics.Valid(); err != nil {
 		return err
 	}
@@ -103,8 +107,8 @@ func LoadConfig(path string) (*Config, error) {
 
 	glog.V(5).Infof("Read config: %+v", config)
 
-	if len(config.Servers) > 0 && config.Kubernetes != nil {
-		return nil, errors.New("Cannot set .Servers and .Kubernetes in config file")
+	if err = config.Valid(); err != nil {
+		return nil, err
 	}
 
 	return &config, err
