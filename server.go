@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/golang/glog"
+	"github.com/kubermatic/k8sniff/metrics"
 	"github.com/kubermatic/k8sniff/parser"
 
 	"k8s.io/client-go/kubernetes"
@@ -49,6 +50,10 @@ const (
 	// to either nginxIngressClass or the empty string.
 	ingressClassKey = "kubernetes.io/ingress.class"
 )
+
+// now provides func() time.Time
+// so it is easier to mock, if wou want to add tests
+var now = time.Now
 
 type ServerAndRegexp struct {
 	Server *Server
@@ -341,6 +346,7 @@ func (c *Config) Serve() error {
 
 	for {
 		conn, err := listener.Accept()
+		start := now()
 		if err != nil {
 			return err
 		}
@@ -349,12 +355,15 @@ func (c *Config) Serve() error {
 			conn.RemoteAddr(),
 			conn.LocalAddr(),
 		)
-		go c.proxy.Handle(conn)
+		go c.proxy.Handle(conn, start)
 	}
 }
 
-func (s *Proxy) Handle(conn net.Conn) {
-	defer conn.Close()
+func (s *Proxy) Handle(conn net.Conn, start time.Time) {
+	defer func(s time.Time) {
+		conn.Close()
+		metrics.ConnectionTime(now().Sub(s))
+	}(start)
 	data := make([]byte, 4096)
 
 	length, err := conn.Read(data)
@@ -418,7 +427,5 @@ func Copycat(client, server net.Conn) {
 	select {
 	case <-cancel:
 		glog.V(6).Info("Disconnected")
-		return
 	}
-
 }
