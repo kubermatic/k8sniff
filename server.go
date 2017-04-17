@@ -225,12 +225,14 @@ func (c *Config) Serve() error {
 		"%s:%d", c.Bind.Host, c.Bind.Port,
 	))
 	if err != nil {
+		metrics.IncErrors("")
 		return err
 	}
 
 	c.proxy = &Proxy{}
 	err = c.proxy.Update(c)
 	if err != nil {
+		metrics.IncErrors("")
 		return err
 	}
 
@@ -241,12 +243,14 @@ func (c *Config) Serve() error {
 			// uses the current context in kubeconfig
 			rcfg, err = clientcmd.BuildConfigFromFlags("", c.Kubernetes.Kubeconfig)
 			if err != nil {
+				metrics.IncErrors("")
 				panic(err.Error())
 			}
 		} else {
 			// creates the in-cluster config
 			rcfg, err = rest.InClusterConfig()
 			if err != nil {
+				metrics.IncErrors("")
 				panic(err.Error())
 			}
 		}
@@ -270,6 +274,7 @@ func (c *Config) Serve() error {
 					glog.V(4).Infof("Adding ingress %s/%s", i.Namespace, i.Name)
 					err := c.UpdateServers()
 					if err != nil {
+						metrics.IncErrors("")
 						glog.Errorf("failed to update servers list after adding ingress %s: %v", i.Name, err)
 					}
 				},
@@ -278,6 +283,7 @@ func (c *Config) Serve() error {
 					glog.V(4).Infof("Updating ingress %s/%s", i.Namespace, i.Name)
 					err := c.UpdateServers()
 					if err != nil {
+						metrics.IncErrors("")
 						glog.Errorf("failed to update servers list after updating ingress %s: %v", i.Name, err)
 					}
 				},
@@ -286,6 +292,7 @@ func (c *Config) Serve() error {
 					glog.V(4).Infof("Deleting ingress %s/%s", i.Namespace, i.Name)
 					err := c.UpdateServers()
 					if err != nil {
+						metrics.IncErrors("")
 						glog.Errorf("failed to update servers list after deleting ingress %s: %v", i.Name, err)
 					}
 				},
@@ -309,6 +316,7 @@ func (c *Config) Serve() error {
 					glog.V(4).Infof("Adding service %q", s.Name)
 					err := c.UpdateServers()
 					if err != nil {
+						metrics.IncErrors("")
 						glog.Errorf("failed to update servers list after adding service %s: %v", s.Name, err)
 					}
 				},
@@ -317,6 +325,7 @@ func (c *Config) Serve() error {
 					glog.V(4).Infof("Updating service %q", s.Name)
 					err := c.UpdateServers()
 					if err != nil {
+						metrics.IncErrors("")
 						glog.Errorf("failed to update servers list after updating service %s: %v", s.Namespace, err)
 					}
 				},
@@ -325,6 +334,7 @@ func (c *Config) Serve() error {
 					glog.V(4).Infof("Deleting service %q", s.Name)
 					err := c.UpdateServers()
 					if err != nil {
+						metrics.IncErrors("")
 						glog.Errorf("failed to update servers list after deleting service %s: %v", s.Name, err)
 					}
 				},
@@ -347,6 +357,7 @@ func (c *Config) Serve() error {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
+			metrics.IncErrors("")
 			return err
 		}
 		start := now()
@@ -370,6 +381,7 @@ func (s *Proxy) Handle(conn net.Conn, start time.Time) {
 	length, err := conn.Read(data)
 	if err != nil {
 		glog.V(4).Infof("Error reading the first 4k of the connection: %s", err)
+		metrics.IncErrors("")
 		return
 	}
 
@@ -400,6 +412,7 @@ func (s *Proxy) Handle(conn net.Conn, start time.Time) {
 	))
 	if err != nil {
 		glog.Warningf("Error connecting to backend: %s", err)
+		metrics.IncErrors("")
 		return
 	}
 	defer clientConn.Close()
@@ -407,6 +420,7 @@ func (s *Proxy) Handle(conn net.Conn, start time.Time) {
 	glog.V(7).Infof("Wrote %d bytes", n)
 	if err != nil {
 		glog.V(7).Infof("Error sending data to backend: %s", err)
+		metrics.IncErrors("")
 		clientConn.Close()
 	}
 	Copycat(clientConn, conn)
@@ -416,7 +430,9 @@ func Copycat(client, server net.Conn) {
 	glog.V(6).Info("Entering copy routine")
 
 	doCopy := func(s, c net.Conn, cancel chan<- bool) {
-		io.Copy(s, c)
+		if _, err := io.Copy(s, c); err != nil {
+			metrics.IncErrors("")
+		}
 		cancel <- true
 	}
 
