@@ -6,7 +6,7 @@ import:
   - parser
   - metrics
 - package: k8s.io/client-go
-  version: v2.0.0
+  version: master
 - package: github.com/prometheus/client_golang
   subpackages:
   - prometheus
