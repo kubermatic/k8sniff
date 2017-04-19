@@ -22,6 +22,9 @@ package main
 
 import (
 	"flag"
+	"fmt"
+
+	"github.com/kubermatic/k8sniff/metrics"
 )
 
 func main() {
@@ -37,6 +40,7 @@ func main() {
 	}
 	config.Kubernetes.Kubeconfig = kubeconfig
 
+	go metrics.Serve(fmt.Sprintf("%s:%d", config.Metrics.Host, config.Metrics.Port), config.Metrics.Path)
 	panic(config.Serve())
 }
 

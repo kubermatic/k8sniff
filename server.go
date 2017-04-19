@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/golang/glog"
+	"github.com/kubermatic/k8sniff/metrics"
 	"github.com/kubermatic/k8sniff/parser"
 
 	"k8s.io/client-go/kubernetes"
@@ -49,6 +50,10 @@ const (
 	// to either nginxIngressClass or the empty string.
 	ingressClassKey = "kubernetes.io/ingress.class"
 )
+
+// now provides func() time.Time
+// so it is easier to mock, if wou want to add tests
+var now = time.Now
 
 type ServerAndRegexp struct {
 	Server *Server
@@ -86,6 +91,7 @@ func (p *Proxy) Update(c *Config) error {
 				host_regexp, err = regexp.Compile("^" + regexp.QuoteMeta(hostname) + "$")
 			}
 			if err != nil {
+				metrics.IncErrors(metrics.Error)
 				return fmt.Errorf("cannot update proxy due to invalid regex: %v", err)
 			}
 			tuple := ServerAndRegexp{&currentServers[i], host_regexp}
@@ -118,9 +124,11 @@ func (c *Config) UpdateServers() error {
 	serverForBackend := func(ing *v1beta1.Ingress, backend *v1beta1.IngressBackend) (*Server, error) {
 		obj, found, err := c.serviceStore.GetByKey(fmt.Sprintf("%s/%s", ing.Namespace, backend.ServiceName))
 		if err != nil {
+			metrics.IncErrors(metrics.Error)
 			return nil, err
 		}
 		if !found {
+			metrics.IncErrors(metrics.Error)
 			return nil, fmt.Errorf("service %s/%s not found", ing.Namespace, backend.ServiceName)
 		}
 		svc := obj.(*v1.Service)
@@ -133,6 +141,7 @@ func (c *Config) UpdateServers() error {
 				}
 			}
 			if port == 0 {
+				metrics.IncErrors(metrics.Error)
 				return nil, fmt.Errorf("port %q of service %s/%s not found", backend.ServicePort.StrVal, svc.Namespace, svc.Name)
 			}
 		} else {
@@ -158,6 +167,7 @@ func (c *Config) UpdateServers() error {
 		if i.Spec.Backend != nil {
 			s, err := serverForBackend(i, i.Spec.Backend)
 			if err != nil {
+				metrics.IncErrors(metrics.Info)
 				glog.Errorf("Ingress %s error with default backend, skipping: %v", name, err)
 			} else {
 				s.Default = true
@@ -177,6 +187,7 @@ func (c *Config) UpdateServers() error {
 				}
 				s, err := serverForBackend(i, &p.Backend)
 				if err != nil {
+					metrics.IncErrors(metrics.Info)
 					glog.Errorf("Ingress %s error with rule %q path %q, skipping: %v", name, r.Host, p.Path, err)
 					continue
 				}
@@ -191,6 +202,7 @@ func (c *Config) UpdateServers() error {
 	glog.V(2).Infof("Updating proxy configuration")
 	err := c.proxy.Update(c)
 	if err != nil {
+		metrics.IncErrors(metrics.Info)
 		glog.Errorf("Error updating proxy: %v", err)
 		// TODO: add backoff logic
 		time.Sleep(time.Second)
@@ -220,12 +232,14 @@ func (c *Config) Serve() error {
 		"%s:%d", c.Bind.Host, c.Bind.Port,
 	))
 	if err != nil {
+		metrics.IncErrors(metrics.Error)
 		return err
 	}
 
 	c.proxy = &Proxy{}
 	err = c.proxy.Update(c)
 	if err != nil {
+		metrics.IncErrors(metrics.Error)
 		return err
 	}
 
@@ -236,12 +250,14 @@ func (c *Config) Serve() error {
 			// uses the current context in kubeconfig
 			rcfg, err = clientcmd.BuildConfigFromFlags("", c.Kubernetes.Kubeconfig)
 			if err != nil {
+				metrics.IncErrors(metrics.Fatal)
 				panic(err.Error())
 			}
 		} else {
 			// creates the in-cluster config
 			rcfg, err = rest.InClusterConfig()
 			if err != nil {
+				metrics.IncErrors(metrics.Fatal)
 				panic(err.Error())
 			}
 		}
@@ -265,6 +281,7 @@ func (c *Config) Serve() error {
 					glog.V(4).Infof("Adding ingress %s/%s", i.Namespace, i.Name)
 					err := c.UpdateServers()
 					if err != nil {
+						metrics.IncErrors(metrics.Info)
 						glog.Errorf("failed to update servers list after adding ingress %s: %v", i.Name, err)
 					}
 				},
@@ -273,6 +290,7 @@ func (c *Config) Serve() error {
 					glog.V(4).Infof("Updating ingress %s/%s", i.Namespace, i.Name)
 					err := c.UpdateServers()
 					if err != nil {
+						metrics.IncErrors(metrics.Info)
 						glog.Errorf("failed to update servers list after updating ingress %s: %v", i.Name, err)
 					}
 				},
@@ -281,6 +299,7 @@ func (c *Config) Serve() error {
 					glog.V(4).Infof("Deleting ingress %s/%s", i.Namespace, i.Name)
 					err := c.UpdateServers()
 					if err != nil {
+						metrics.IncErrors(metrics.Info)
 						glog.Errorf("failed to update servers list after deleting ingress %s: %v", i.Name, err)
 					}
 				},
@@ -304,6 +323,7 @@ func (c *Config) Serve() error {
 					glog.V(4).Infof("Adding service %q", s.Name)
 					err := c.UpdateServers()
 					if err != nil {
+						metrics.IncErrors(metrics.Info)
 						glog.Errorf("failed to update servers list after adding service %s: %v", s.Name, err)
 					}
 				},
@@ -312,6 +332,7 @@ func (c *Config) Serve() error {
 					glog.V(4).Infof("Updating service %q", s.Name)
 					err := c.UpdateServers()
 					if err != nil {
+						metrics.IncErrors(metrics.Info)
 						glog.Errorf("failed to update servers list after updating service %s: %v", s.Namespace, err)
 					}
 				},
@@ -320,6 +341,7 @@ func (c *Config) Serve() error {
 					glog.V(4).Infof("Deleting service %q", s.Name)
 					err := c.UpdateServers()
 					if err != nil {
+						metrics.IncErrors(metrics.Info)
 						glog.Errorf("failed to update servers list after deleting service %s: %v", s.Name, err)
 					}
 				},
@@ -342,23 +364,30 @@ func (c *Config) Serve() error {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
+			metrics.IncErrors(metrics.Error)
 			return err
 		}
+		start := now()
+		metrics.IncConnections()
 		glog.V(3).Infof(
 			"%s -> %s",
 			conn.RemoteAddr(),
 			conn.LocalAddr(),
 		)
-		go c.proxy.Handle(conn)
+		go c.proxy.Handle(conn, start)
 	}
 }
 
-func (s *Proxy) Handle(conn net.Conn) {
-	defer conn.Close()
+func (s *Proxy) Handle(conn net.Conn, start time.Time) {
+	defer func(s time.Time) {
+		conn.Close()
+		metrics.ConnectionTime(now().Sub(s))
+	}(start)
 	data := make([]byte, 4096)
 
 	length, err := conn.Read(data)
 	if err != nil {
+		metrics.IncErrors(metrics.Error)
 		glog.V(4).Infof("Error reading the first 4k of the connection: %s", err)
 		return
 	}
@@ -389,6 +418,7 @@ func (s *Proxy) Handle(conn net.Conn) {
 		"%s:%d", proxy.Host, proxy.Port,
 	))
 	if err != nil {
+		metrics.IncErrors(metrics.Error)
 		glog.Warningf("Error connecting to backend: %s", err)
 		return
 	}
@@ -396,8 +426,10 @@ func (s *Proxy) Handle(conn net.Conn) {
 	n, err := clientConn.Write(data[:length])
 	glog.V(7).Infof("Wrote %d bytes", n)
 	if err != nil {
+		metrics.IncErrors(metrics.Info)
 		glog.V(7).Infof("Error sending data to backend: %s", err)
 		clientConn.Close()
+		return
 	}
 	Copycat(clientConn, conn)
 }
@@ -406,7 +438,9 @@ func Copycat(client, server net.Conn) {
 	glog.V(6).Info("Entering copy routine")
 
 	doCopy := func(s, c net.Conn, cancel chan<- bool) {
-		io.Copy(s, c)
+		if _, err := io.Copy(s, c); err != nil {
+			metrics.IncErrors(metrics.Info)
+		}
 		cancel <- true
 	}
 
@@ -418,7 +452,5 @@ func Copycat(client, server net.Conn) {
 	select {
 	case <-cancel:
 		glog.V(6).Info("Disconnected")
-		return
 	}
-
 }

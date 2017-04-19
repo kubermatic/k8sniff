@@ -4,5 +4,10 @@ import:
 - package: github.com/kubermatic/k8sniff
   subpackages:
   - parser
+  - metrics
 - package: k8s.io/client-go
   version: master
+- package: github.com/prometheus/client_golang
+  subpackages:
+  - prometheus
+  - prometheus/promhttp

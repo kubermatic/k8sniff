@@ -1,0 +1,11 @@
+{
+  "bind": {
+    "host": "localhost",
+    "port": 8443
+  },
+  "kubernetes": {},
+  "metrics": {
+    "path": "/metrics",
+    "port": 8080
+  }
+}
