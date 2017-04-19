@@ -4,6 +4,12 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+const (
+	Error = "error"
+	Fatal = "fatal"
+	Info  = "info"
+)
+
 var (
 	errorCounterVec = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
