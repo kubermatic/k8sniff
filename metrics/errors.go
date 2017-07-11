@@ -13,7 +13,7 @@ const (
 var (
 	errorCounterVec = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "errors_total",
+			Name: Prefix + "errors_total",
 			Help: "Total error count",
 		},
 		[]string{"type"},

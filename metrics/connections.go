@@ -8,12 +8,12 @@ import (
 
 var (
 	connDurationsHisto = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name: "connection_durations_histogram_seconds",
+		Name: Prefix + "connection_durations_histogram_seconds",
 		Help: "Connection duration distributions.",
 	})
 	connGauge = prometheus.NewGauge(
 		prometheus.GaugeOpts{
-			Name: "opened_connections_count",
+			Name: Prefix + "opened_connections_count",
 			Help: "Number of opened TCP connections",
 		},
 	)
