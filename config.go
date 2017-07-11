@@ -23,29 +23,58 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"sync"
 
 	"github.com/golang/glog"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
+)
+
+const (
+	maxTCPPort = 65535
 )
 
 type Config struct {
 	Bind       Bind
+	Metrics    Metrics
 	Servers    []Server
 	Kubernetes *Kubernetes
 	proxy      *Proxy
 	lock       sync.Mutex
 
-	serviceController *cache.Controller
+	serviceController cache.Controller
 	serviceStore      cache.Store
-	ingressController *cache.Controller
+	ingressController cache.Controller
 	ingressStore      cache.Store
+}
+
+// Valid returns an if the config is invalid
+func (c *Config) Valid() error {
+	if len(c.Servers) > 0 && c.Kubernetes != nil {
+		return errors.New("Cannot set .Servers and .Kubernetes in config file")
+	}
+
+	if err := c.Metrics.Valid(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 type Kubernetes struct {
 	Kubeconfig   string
+	Client       *kubernetes.Clientset
 	IngressClass string
+}
+
+// Metrics contains the port & path for the
+// prometheus endpoint
+type Metrics struct {
+	Host string
+	Port int
+	Path string
 }
 
 type Bind struct {
@@ -61,6 +90,15 @@ type Server struct {
 	Port    int
 }
 
+// Valid returns an error if the metrics config is invalid
+func (m Metrics) Valid() error {
+	if m.Port > maxTCPPort {
+		return fmt.Errorf("Configured metrics port is above %d: port=%d", maxTCPPort, m.Port)
+	}
+
+	return nil
+}
+
 func LoadConfig(path string) (*Config, error) {
 	glog.V(5).Infof("Loading config from: %s", path)
 
@@ -74,11 +112,11 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
-	glog.V(5).Infof("Read config: %+v", config)
-
-	if len(config.Servers) > 0 && config.Kubernetes != nil {
-		return nil, errors.New("Cannot set .Servers and .Kubernetes in config file")
+	if err = config.Valid(); err != nil {
+		return nil, err
 	}
+
+	glog.V(5).Infof("Read config: %v", config)
 
 	return &config, err
 }

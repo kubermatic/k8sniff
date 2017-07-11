@@ -29,18 +29,21 @@ import (
 	"time"
 
 	"github.com/golang/glog"
+	"github.com/kubermatic/k8sniff/metrics"
 	"github.com/kubermatic/k8sniff/parser"
 
+	"k8s.io/api/core/v1"
+	"k8s.io/api/extensions/v1beta1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/pkg/api/v1"
-	"k8s.io/client-go/pkg/apis/extensions/v1beta1"
-	"k8s.io/client-go/pkg/runtime"
-	"k8s.io/client-go/pkg/util/intstr"
-	"k8s.io/client-go/pkg/util/wait"
-	"k8s.io/client-go/pkg/watch"
-	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
+	"math/rand"
+	"strings"
 )
 
 const (
@@ -48,7 +51,13 @@ const (
 	// only processes Ingresses with this annotation either unset, or set
 	// to either nginxIngressClass or the empty string.
 	ingressClassKey = "kubernetes.io/ingress.class"
+
+	ConnectionClosedErr = "use of closed network connection"
 )
+
+// now provides func() time.Time
+// so it is easier to mock, if wou want to add tests
+var now = time.Now
 
 type ServerAndRegexp struct {
 	Server *Server
@@ -61,34 +70,34 @@ type Proxy struct {
 	Default    *Server
 }
 
-func (c *Proxy) Get(host string) *Server {
-	c.Lock.RLock()
-	defer c.Lock.RUnlock()
+func (p *Proxy) Get(host string) *Server {
+	p.Lock.RLock()
+	defer p.Lock.RUnlock()
 
-	for _, tuple := range c.ServerList {
+	for _, tuple := range p.ServerList {
 		if tuple.Regexp.MatchString(host) {
 			return tuple.Server
 		}
 	}
-	return c.Default
+	return p.Default
 }
 
 func (p *Proxy) Update(c *Config) error {
 	servers := []ServerAndRegexp{}
-	currentServers := c.CurrentServers()
+	currentServers := c.Servers
 	for i, server := range currentServers {
 		for _, hostname := range server.Names {
-			var host_regexp *regexp.Regexp
+			var hostRegexp *regexp.Regexp
 			var err error
 			if server.Regexp {
-				host_regexp, err = regexp.Compile(hostname)
+				hostRegexp, err = regexp.Compile(hostname)
 			} else {
-				host_regexp, err = regexp.Compile("^" + regexp.QuoteMeta(hostname) + "$")
+				hostRegexp, err = regexp.Compile("^" + regexp.QuoteMeta(hostname) + "$")
 			}
 			if err != nil {
 				return fmt.Errorf("cannot update proxy due to invalid regex: %v", err)
 			}
-			tuple := ServerAndRegexp{&currentServers[i], host_regexp}
+			tuple := ServerAndRegexp{&currentServers[i], hostRegexp}
 			servers = append(servers, tuple)
 		}
 	}
@@ -114,7 +123,6 @@ func (c *Config) UpdateServers() error {
 		class = "k8sniff"
 	}
 
-	c.lock.Lock()
 	serverForBackend := func(ing *v1beta1.Ingress, backend *v1beta1.IngressBackend) (*Server, error) {
 		obj, found, err := c.serviceStore.GetByKey(fmt.Sprintf("%s/%s", ing.Namespace, backend.ServiceName))
 		if err != nil {
@@ -133,85 +141,75 @@ func (c *Config) UpdateServers() error {
 				}
 			}
 			if port == 0 {
-				return nil, fmt.Errorf("port %q of service %s/%s not found", backend.ServicePort.StrVal, svc.Namespace, svc.Name)
+				return nil, fmt.Errorf("port %s of service %s/%s not found", backend.ServicePort.StrVal, svc.Namespace, svc.Name)
 			}
 		} else {
 			port = int(backend.ServicePort.IntVal)
 		}
 		return &Server{
 			Host: svc.Spec.ClusterIP,
-			// TODO: support string values:
 			Port: port,
 		}, nil
 	}
 
-	c.Servers = []Server{}
-	iList := c.ingressStore.List()
-	for _, i := range iList {
+	servers := []Server{}
+	ingressList := c.ingressStore.List()
+	for _, i := range ingressList {
 		i := i.(*v1beta1.Ingress)
 		name := fmt.Sprintf("%s/%s", i.Namespace, i.Name)
 		if i.Annotations[ingressClassKey] != class {
-			glog.Errorf("Skipping ingress %s due to missing annotation. Expected %s=%s Got %s=%s", name, ingressClassKey, class, ingressClassKey, i.Annotations[ingressClassKey])
+			glog.V(6).Infof("Skipping ingress %s due to missing annotation. Expected %s=%s Got %s=%s", name, ingressClassKey, class, ingressClassKey, i.Annotations[ingressClassKey])
 			continue
 		}
 
 		if i.Spec.Backend != nil {
 			s, err := serverForBackend(i, i.Spec.Backend)
 			if err != nil {
+				metrics.IncErrors(metrics.Error)
 				glog.Errorf("Ingress %s error with default backend, skipping: %v", name, err)
 			} else {
 				s.Default = true
 				glog.V(4).Infof("Adding default backend -> %s:%d", s.Host, s.Port)
-				c.Servers = append(c.Servers, *s)
+				servers = append(servers, *s)
 			}
 		}
 		for _, r := range i.Spec.Rules {
 			if r.HTTP == nil {
+				metrics.IncErrors(metrics.Error)
 				glog.Errorf("Ingress %s error with rule, skipping: http must be set", name)
 				continue
 			}
 			for _, p := range r.HTTP.Paths {
 				if p.Path != "" && p.Path != "/" {
+					metrics.IncErrors(metrics.Error)
 					glog.Errorf("Ingress %s error with rule, skipping: path is not empty", name)
 					continue
 				}
 				s, err := serverForBackend(i, &p.Backend)
 				if err != nil {
+					metrics.IncErrors(metrics.Error)
 					glog.Errorf("Ingress %s error with rule %q path %q, skipping: %v", name, r.Host, p.Path, err)
 					continue
 				}
 				s.Names = []string{r.Host}
 				glog.V(4).Infof("Adding backend %q -> %s:%d", r.Host, s.Host, s.Port)
-				c.Servers = append(c.Servers, *s)
+				servers = append(servers, *s)
 			}
 		}
 	}
-	c.lock.Unlock()
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	c.Servers = servers
 
 	glog.V(2).Infof("Updating proxy configuration")
 	err := c.proxy.Update(c)
 	if err != nil {
-		glog.Errorf("Error updating proxy: %v", err)
-		// TODO: add backoff logic
 		time.Sleep(time.Second)
-	} else {
-		glog.V(2).Infof("Proxy configuration update done")
+		return fmt.Errorf("failed to update proxy: %v", err)
 	}
 
+	glog.V(2).Infof("Proxy configuration update done")
 	return nil
-}
-
-// gets a point in time copy for reading to prevent race conditions when reading and updating server list
-func (c *Config) CurrentServers() []Server {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-
-	copyOfServers := make([]Server, len(c.Servers))
-	for i := range c.Servers {
-		copyOfServers[i] = c.Servers[i]
-	}
-
-	return copyOfServers
 }
 
 func (c *Config) Serve() error {
@@ -220,41 +218,33 @@ func (c *Config) Serve() error {
 		"%s:%d", c.Bind.Host, c.Bind.Port,
 	))
 	if err != nil {
+		metrics.IncErrors(metrics.Fatal)
 		return err
 	}
 
 	c.proxy = &Proxy{}
 	err = c.proxy.Update(c)
 	if err != nil {
+		metrics.IncErrors(metrics.Fatal)
 		return err
 	}
 
 	if c.Kubernetes != nil {
-		var rcfg *rest.Config
-		var err error
-		if c.Kubernetes.Kubeconfig != "" {
-			// uses the current context in kubeconfig
-			rcfg, err = clientcmd.BuildConfigFromFlags("", c.Kubernetes.Kubeconfig)
-			if err != nil {
-				panic(err.Error())
-			}
-		} else {
-			// creates the in-cluster config
-			rcfg, err = rest.InClusterConfig()
-			if err != nil {
-				panic(err.Error())
-			}
+		rcfg, err := clientcmd.BuildConfigFromFlags("", c.Kubernetes.Kubeconfig)
+		if err != nil {
+			metrics.IncErrors(metrics.Fatal)
+			return err
 		}
 
 		client := kubernetes.NewForConfigOrDie(rcfg)
 
 		c.ingressStore, c.ingressController = cache.NewInformer(
 			&cache.ListWatch{
-				ListFunc: func(options v1.ListOptions) (runtime.Object, error) {
-					return client.Extensions().Ingresses(v1.NamespaceAll).List(options)
+				ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
+					return client.ExtensionsV1beta1().Ingresses(metav1.NamespaceAll).List(options)
 				},
-				WatchFunc: func(options v1.ListOptions) (watch.Interface, error) {
-					return client.Extensions().Ingresses(v1.NamespaceAll).Watch(options)
+				WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
+					return client.ExtensionsV1beta1().Ingresses(metav1.NamespaceAll).Watch(options)
 				},
 			},
 			&v1beta1.Ingress{},
@@ -265,6 +255,7 @@ func (c *Config) Serve() error {
 					glog.V(4).Infof("Adding ingress %s/%s", i.Namespace, i.Name)
 					err := c.UpdateServers()
 					if err != nil {
+						metrics.IncErrors(metrics.Error)
 						glog.Errorf("failed to update servers list after adding ingress %s: %v", i.Name, err)
 					}
 				},
@@ -273,6 +264,7 @@ func (c *Config) Serve() error {
 					glog.V(4).Infof("Updating ingress %s/%s", i.Namespace, i.Name)
 					err := c.UpdateServers()
 					if err != nil {
+						metrics.IncErrors(metrics.Error)
 						glog.Errorf("failed to update servers list after updating ingress %s: %v", i.Name, err)
 					}
 				},
@@ -281,6 +273,7 @@ func (c *Config) Serve() error {
 					glog.V(4).Infof("Deleting ingress %s/%s", i.Namespace, i.Name)
 					err := c.UpdateServers()
 					if err != nil {
+						metrics.IncErrors(metrics.Error)
 						glog.Errorf("failed to update servers list after deleting ingress %s: %v", i.Name, err)
 					}
 				},
@@ -289,11 +282,11 @@ func (c *Config) Serve() error {
 
 		c.serviceStore, c.serviceController = cache.NewInformer(
 			&cache.ListWatch{
-				ListFunc: func(options v1.ListOptions) (runtime.Object, error) {
-					return client.Services(v1.NamespaceAll).List(options)
+				ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
+					return client.Services(metav1.NamespaceAll).List(options)
 				},
-				WatchFunc: func(options v1.ListOptions) (watch.Interface, error) {
-					return client.Services(v1.NamespaceAll).Watch(options)
+				WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
+					return client.Services(metav1.NamespaceAll).Watch(options)
 				},
 			},
 			&v1.Service{},
@@ -304,6 +297,7 @@ func (c *Config) Serve() error {
 					glog.V(4).Infof("Adding service %q", s.Name)
 					err := c.UpdateServers()
 					if err != nil {
+						metrics.IncErrors(metrics.Info)
 						glog.Errorf("failed to update servers list after adding service %s: %v", s.Name, err)
 					}
 				},
@@ -312,6 +306,7 @@ func (c *Config) Serve() error {
 					glog.V(4).Infof("Updating service %q", s.Name)
 					err := c.UpdateServers()
 					if err != nil {
+						metrics.IncErrors(metrics.Info)
 						glog.Errorf("failed to update servers list after updating service %s: %v", s.Namespace, err)
 					}
 				},
@@ -320,6 +315,7 @@ func (c *Config) Serve() error {
 					glog.V(4).Infof("Deleting service %q", s.Name)
 					err := c.UpdateServers()
 					if err != nil {
+						metrics.IncErrors(metrics.Info)
 						glog.Errorf("failed to update servers list after deleting service %s: %v", s.Name, err)
 					}
 				},
@@ -342,45 +338,60 @@ func (c *Config) Serve() error {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
+			metrics.IncErrors(metrics.Error)
 			return err
 		}
-		glog.V(3).Infof(
-			"%s -> %s",
+
+		connectionID := RandomString(8)
+		glog.V(4).Infof(
+			"[%s] Proxy: %s -> %s",
+			connectionID,
 			conn.RemoteAddr(),
 			conn.LocalAddr(),
 		)
-		go c.proxy.Handle(conn)
+		go c.proxy.Handle(conn, connectionID)
 	}
 }
 
-func (s *Proxy) Handle(conn net.Conn) {
-	defer conn.Close()
+func (p *Proxy) Handle(conn net.Conn, connectionID string) {
+	metrics.IncConnections()
+	start := now()
+	defer func(s time.Time) {
+		err := conn.Close()
+		if err != nil {
+			glog.Errorf("[%s] Failed closing connection: %v", connectionID, err)
+			metrics.IncErrors(metrics.Error)
+		}
+		metrics.DecConnections()
+		metrics.ConnectionTime(now().Sub(s))
+	}(start)
 	data := make([]byte, 4096)
 
 	length, err := conn.Read(data)
 	if err != nil {
-		glog.V(4).Infof("Error reading the first 4k of the connection: %s", err)
+		metrics.IncErrors(metrics.Error)
+		glog.V(4).Infof("[%s] Error reading the first 4k of the connection: %v", connectionID, err)
 		return
 	}
 
 	var proxy *Server
-	hostname, hostname_err := parser.GetHostname(data[:])
-	if hostname_err == nil {
-		glog.V(6).Infof("Parsed hostname: %s", hostname)
+	hostname, hostnameErr := parser.GetHostname(data[:])
+	if hostnameErr == nil {
+		glog.V(6).Infof("[%s] Parsed hostname: %s", connectionID, hostname)
 
-		proxy = s.Get(hostname)
+		proxy = p.Get(hostname)
 		if proxy == nil {
-			glog.V(4).Infof("No proxy matched %s", hostname)
+			glog.V(4).Infof("[%s] No proxy matched %s", connectionID, hostname)
 			return
 		} else {
-			glog.V(4).Infof("Host found %s", proxy.Host)
+			glog.V(4).Infof("[%s] Host found %s", connectionID, proxy.Host)
 		}
 	} else {
-		glog.V(6).Info("Parsed request without hostname")
+		glog.V(6).Info("[%s] Parsed request without hostname", connectionID)
 
-		proxy = s.Default
+		proxy = p.Default
 		if proxy == nil {
-			glog.V(4).Info("No default proxy")
+			glog.V(4).Info("[%s] No default proxy", connectionID)
 			return
 		}
 	}
@@ -389,24 +400,40 @@ func (s *Proxy) Handle(conn net.Conn) {
 		"%s:%d", proxy.Host, proxy.Port,
 	))
 	if err != nil {
-		glog.Warningf("Error connecting to backend: %s", err)
+		metrics.IncErrors(metrics.Error)
+		glog.Errorf("[%s] Error connecting to backend: %v", connectionID, err)
 		return
 	}
-	defer clientConn.Close()
+
+	defer func() {
+		err := clientConn.Close()
+		if err != nil {
+			glog.Errorf("[%s] Failed closing client connection: %v", connectionID, err)
+			metrics.IncErrors(metrics.Error)
+		}
+	}()
+
 	n, err := clientConn.Write(data[:length])
-	glog.V(7).Infof("Wrote %d bytes", n)
+	glog.V(7).Infof("[%s] Wrote %d bytes", connectionID, n)
 	if err != nil {
-		glog.V(7).Infof("Error sending data to backend: %s", err)
-		clientConn.Close()
+		metrics.IncErrors(metrics.Info)
+		glog.V(7).Infof("[%s] Error sending data to backend: %v", connectionID, err)
+		return
 	}
-	Copycat(clientConn, conn)
+	Copycat(clientConn, conn, connectionID)
 }
 
-func Copycat(client, server net.Conn) {
-	glog.V(6).Info("Entering copy routine")
+func Copycat(client, server net.Conn, connectionID string) {
+	glog.V(6).Infof("[%s] Initiating copy between %s and %s", connectionID, client.RemoteAddr().String(), server.RemoteAddr().String())
 
 	doCopy := func(s, c net.Conn, cancel chan<- bool) {
-		io.Copy(s, c)
+		glog.V(7).Infof("[%s] Established connection %s -> %s", connectionID, s.RemoteAddr().String(), c.RemoteAddr().String())
+		_, err := io.Copy(s, c)
+		if err != nil && !strings.Contains(err.Error(), ConnectionClosedErr) {
+			glog.Errorf("[%s] Failed copying connection data: %v", connectionID, err)
+			metrics.IncErrors(metrics.Error)
+		}
+		glog.V(7).Infof("[%s] Destroyed connection %s -> %s", connectionID, s.RemoteAddr().String(), c.RemoteAddr().String())
 		cancel <- true
 	}
 
@@ -417,8 +444,17 @@ func Copycat(client, server net.Conn) {
 
 	select {
 	case <-cancel:
-		glog.V(6).Info("Disconnected")
+		glog.V(6).Infof("[%s] Disconnected", connectionID)
 		return
 	}
+}
 
+func RandomString(strlen int) string {
+	rand.Seed(time.Now().UTC().UnixNano())
+	const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
+	result := make([]byte, strlen)
+	for i := 0; i < strlen; i++ {
+		result[i] = chars[rand.Intn(len(chars))]
+	}
+	return string(result)
 }
