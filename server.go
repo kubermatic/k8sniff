@@ -211,8 +211,9 @@ func (c *Config) UpdateServers() error {
 		glog.V(2).Infof("Updated servers. New servers:")
 		c.PrintCurrentServers(2)
 		glog.V(2).Infof("================================================")
-
 	}
+
+	metrics.SetBackendCount(len(c.Servers) - 1)
 
 	return nil
 }
