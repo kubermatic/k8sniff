@@ -54,6 +54,7 @@ const (
 	ingressClassKey = "kubernetes.io/ingress.class"
 
 	ConnectionClosedErr = "use of closed network connection"
+	ConnectionResetErr  = "connection reset by peer"
 )
 
 // now provides func() time.Time
@@ -424,7 +425,7 @@ func Copycat(client, server net.Conn, connectionID string) {
 	doCopy := func(s, c net.Conn, cancel chan<- bool) {
 		glog.V(7).Infof("[%s] Established connection %s -> %s", connectionID, s.RemoteAddr().String(), c.RemoteAddr().String())
 		_, err := io.Copy(s, c)
-		if err != nil && !strings.Contains(err.Error(), ConnectionClosedErr) {
+		if err != nil && !strings.Contains(err.Error(), ConnectionClosedErr) && !strings.Contains(err.Error(), ConnectionResetErr) {
 			glog.V(0).Infof("[%s] Failed copying connection data: %v", connectionID, err)
 			metrics.IncErrors(metrics.Error)
 		}
