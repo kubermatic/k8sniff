@@ -1,13 +1,5 @@
 # The container definition we want to use for developing our app
-box: golang:1.7
-dev:
-  steps:
-    - script:
-        name: install goimports
-        code: |
-          go get -u golang.org/x/tools/cmd/goimports
-    - internal/shell:
-      code:
+box: golang:1.8
 build:
   steps:
     - setup-go-workspace:
@@ -40,7 +32,7 @@ build:
 
 deploy:
   box:
-    id: alpine:3.4
+    id: alpine:3.6
     cmd: /bin/sh
   docker-push:
     - internal/docker-push:
@@ -50,6 +42,6 @@ deploy:
         username: $USERNAME
         password: $PASSWORD
         email: scheele.s@web.de
-        tag: latest
+        tag: $WERCKER_GIT_COMMIT
         repository: kubermatic/k8sniff
         registry: https://registry.hub.docker.com

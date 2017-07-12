@@ -22,6 +22,9 @@ package main
 
 import (
 	"flag"
+	"fmt"
+
+	"github.com/kubermatic/k8sniff/metrics"
 )
 
 func main() {
@@ -37,7 +40,10 @@ func main() {
 	}
 	config.Kubernetes.Kubeconfig = kubeconfig
 
-	panic(config.Serve())
-}
+	go metrics.Serve(fmt.Sprintf("%s:%d", config.Metrics.Host, config.Metrics.Port), config.Metrics.Path)
 
-// vim: foldmethod=marker
+	stop := make(chan struct{})
+	defer close(stop)
+	go panic(config.Serve(stop))
+	<-stop
+}
