@@ -1,5 +1,5 @@
 hash: 5fc532cbec8e8bd75954a22d517b0708fc4e5922ea52ce31527713f6335b482c
-updated: 2017-07-10T12:45:33.944060536+02:00
+updated: 2017-07-11T22:23:55.112799509+02:00
 imports:
 - name: github.com/beorn7/perks
   version: 4c0e84591b9aa9e6dcfdf3e020114cd81f89d5f9
@@ -31,7 +31,7 @@ imports:
   - proto
   - sortkeys
 - name: github.com/golang/glog
-  version: 44145f04b68cf362d9c4df2182967c2275eaefed
+  version: 23def4e6c14b4da8ac2ed8007337bc5eb5007998
 - name: github.com/golang/protobuf
   version: 4bd1920723d7b7c925de087aa32e2187708897f7
   subpackages:
@@ -196,7 +196,7 @@ imports:
   - pkg/watch
   - third_party/forked/golang/reflect
 - name: k8s.io/client-go
-  version: b1ed43528171d6a3c0292ff33a4025b2e89a912e
+  version: d03136c067423d216274eff98f834e385bec6225
   subpackages:
   - discovery
   - kubernetes

@@ -28,6 +28,7 @@ import (
 	"sync"
 
 	"github.com/golang/glog"
+
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 )

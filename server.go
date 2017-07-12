@@ -23,8 +23,11 @@ package main
 import (
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
+	"reflect"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -42,8 +45,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
-	"math/rand"
-	"strings"
 )
 
 const (
@@ -166,54 +167,90 @@ func (c *Config) UpdateServers() error {
 			s, err := serverForBackend(i, i.Spec.Backend)
 			if err != nil {
 				metrics.IncErrors(metrics.Error)
-				glog.Errorf("Ingress %s error with default backend, skipping: %v", name, err)
+				glog.V(0).Infof("Ingress %s error with default backend, skipping: %v", name, err)
 			} else {
 				s.Default = true
-				glog.V(4).Infof("Adding default backend -> %s:%d", s.Host, s.Port)
 				servers = append(servers, *s)
 			}
 		}
 		for _, r := range i.Spec.Rules {
 			if r.HTTP == nil {
 				metrics.IncErrors(metrics.Error)
-				glog.Errorf("Ingress %s error with rule, skipping: http must be set", name)
+				glog.V(0).Infof("Ingress %s error with rule, skipping: http must be set", name)
 				continue
 			}
 			for _, p := range r.HTTP.Paths {
 				if p.Path != "" && p.Path != "/" {
 					metrics.IncErrors(metrics.Error)
-					glog.Errorf("Ingress %s error with rule, skipping: path is not empty", name)
+					glog.V(0).Infof("Ingress %s error with rule, skipping: path is not empty", name)
 					continue
 				}
 				s, err := serverForBackend(i, &p.Backend)
 				if err != nil {
 					metrics.IncErrors(metrics.Error)
-					glog.Errorf("Ingress %s error with rule %q path %q, skipping: %v", name, r.Host, p.Path, err)
+					glog.V(0).Infof("Ingress %s error with rule %q path %q, skipping: %v", name, r.Host, p.Path, err)
 					continue
 				}
 				s.Names = []string{r.Host}
-				glog.V(4).Infof("Adding backend %q -> %s:%d", r.Host, s.Host, s.Port)
+				glog.V(6).Infof("Adding backend %q -> %s:%d", r.Host, s.Host, s.Port)
 				servers = append(servers, *s)
 			}
 		}
 	}
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	c.Servers = servers
+	if !reflect.DeepEqual(c.Servers, servers) {
+		c.Servers = servers
+		glog.V(2).Infof("Updating proxy configuration")
+		err := c.proxy.Update(c)
+		if err != nil {
+			time.Sleep(time.Second)
+			return fmt.Errorf("failed to update proxy: %v", err)
+		}
+		glog.V(2).Infof("================================================")
+		glog.V(2).Infof("Updated servers. New servers:")
+		c.PrintCurrentServers(2)
+		glog.V(2).Infof("================================================")
 
-	glog.V(2).Infof("Updating proxy configuration")
-	err := c.proxy.Update(c)
-	if err != nil {
-		time.Sleep(time.Second)
-		return fmt.Errorf("failed to update proxy: %v", err)
 	}
 
-	glog.V(2).Infof("Proxy configuration update done")
 	return nil
 }
 
-func (c *Config) Serve() error {
-	glog.V(1).Infof("Listening on %s:%d", c.Bind.Host, c.Bind.Port)
+func (c *Config) PrintCurrentServers(logLevel glog.Level) {
+	for _, s := range c.Servers {
+		hostnames := strings.Join(s.Names, ",")
+		if hostnames == "" {
+			hostnames = "default backend"
+		}
+		glog.V(logLevel).Infof("%s -> %s", hostnames, s.Host)
+	}
+}
+
+func (c *Config) Debug() {
+	glog.V(4).Info("================================================")
+	glog.V(4).Info("Current configured servers:")
+	c.PrintCurrentServers(4)
+	glog.V(4).Info("================================================")
+}
+
+func (c *Config) TriggerUpdate() {
+	if !c.ControllersHaveSynced() {
+		return
+	}
+	err := c.UpdateServers()
+	if err != nil {
+		metrics.IncErrors(metrics.Info)
+		glog.V(0).Infof("failed to update servers list: %v", err)
+	}
+}
+
+func (c *Config) ControllersHaveSynced() bool {
+	return c.ingressController.HasSynced() && c.serviceController.HasSynced()
+}
+
+func (c *Config) Serve(stopCh chan struct{}) error {
+	glog.V(0).Infof("Listening on %s:%d", c.Bind.Host, c.Bind.Port)
 	listener, err := net.Listen("tcp", fmt.Sprintf(
 		"%s:%d", c.Bind.Host, c.Bind.Port,
 	))
@@ -230,52 +267,31 @@ func (c *Config) Serve() error {
 	}
 
 	if c.Kubernetes != nil {
-		rcfg, err := clientcmd.BuildConfigFromFlags("", c.Kubernetes.Kubeconfig)
+		cfg, err := clientcmd.BuildConfigFromFlags("", c.Kubernetes.Kubeconfig)
 		if err != nil {
-			metrics.IncErrors(metrics.Fatal)
-			return err
+			panic(err)
 		}
-
-		client := kubernetes.NewForConfigOrDie(rcfg)
-
+		c.Kubernetes.Client = kubernetes.NewForConfigOrDie(cfg)
 		c.ingressStore, c.ingressController = cache.NewInformer(
 			&cache.ListWatch{
 				ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
-					return client.ExtensionsV1beta1().Ingresses(metav1.NamespaceAll).List(options)
+					return c.Kubernetes.Client.ExtensionsV1beta1().Ingresses("").List(options)
 				},
 				WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-					return client.ExtensionsV1beta1().Ingresses(metav1.NamespaceAll).Watch(options)
+					return c.Kubernetes.Client.ExtensionsV1beta1().Ingresses("").Watch(options)
 				},
 			},
 			&v1beta1.Ingress{},
-			5*time.Minute,
+			30*time.Minute,
 			cache.ResourceEventHandlerFuncs{
 				AddFunc: func(obj interface{}) {
-					i := obj.(*v1beta1.Ingress)
-					glog.V(4).Infof("Adding ingress %s/%s", i.Namespace, i.Name)
-					err := c.UpdateServers()
-					if err != nil {
-						metrics.IncErrors(metrics.Error)
-						glog.Errorf("failed to update servers list after adding ingress %s: %v", i.Name, err)
-					}
+					go c.TriggerUpdate()
 				},
 				UpdateFunc: func(old, cur interface{}) {
-					i := cur.(*v1beta1.Ingress)
-					glog.V(4).Infof("Updating ingress %s/%s", i.Namespace, i.Name)
-					err := c.UpdateServers()
-					if err != nil {
-						metrics.IncErrors(metrics.Error)
-						glog.Errorf("failed to update servers list after updating ingress %s: %v", i.Name, err)
-					}
+					go c.TriggerUpdate()
 				},
 				DeleteFunc: func(obj interface{}) {
-					i := obj.(*v1beta1.Ingress)
-					glog.V(4).Infof("Deleting ingress %s/%s", i.Namespace, i.Name)
-					err := c.UpdateServers()
-					if err != nil {
-						metrics.IncErrors(metrics.Error)
-						glog.Errorf("failed to update servers list after deleting ingress %s: %v", i.Name, err)
-					}
+					go c.TriggerUpdate()
 				},
 			},
 		)
@@ -283,57 +299,35 @@ func (c *Config) Serve() error {
 		c.serviceStore, c.serviceController = cache.NewInformer(
 			&cache.ListWatch{
 				ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
-					return client.Services(metav1.NamespaceAll).List(options)
+					return c.Kubernetes.Client.Services("").List(options)
 				},
 				WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-					return client.Services(metav1.NamespaceAll).Watch(options)
+					return c.Kubernetes.Client.Services("").Watch(options)
 				},
 			},
 			&v1.Service{},
-			5*time.Minute,
+			30*time.Minute,
 			cache.ResourceEventHandlerFuncs{
 				AddFunc: func(obj interface{}) {
-					s := obj.(*v1.Service)
-					glog.V(4).Infof("Adding service %q", s.Name)
-					err := c.UpdateServers()
-					if err != nil {
-						metrics.IncErrors(metrics.Info)
-						glog.Errorf("failed to update servers list after adding service %s: %v", s.Name, err)
-					}
+					go c.TriggerUpdate()
 				},
 				UpdateFunc: func(old, cur interface{}) {
-					s := cur.(*v1.Service)
-					glog.V(4).Infof("Updating service %q", s.Name)
-					err := c.UpdateServers()
-					if err != nil {
-						metrics.IncErrors(metrics.Info)
-						glog.Errorf("failed to update servers list after updating service %s: %v", s.Namespace, err)
-					}
+					go c.TriggerUpdate()
 				},
 				DeleteFunc: func(obj interface{}) {
-					s := obj.(*v1.Service)
-					glog.V(4).Infof("Deleting service %q", s.Name)
-					err := c.UpdateServers()
-					if err != nil {
-						metrics.IncErrors(metrics.Info)
-						glog.Errorf("failed to update servers list after deleting service %s: %v", s.Name, err)
-					}
+					go c.TriggerUpdate()
 				},
 			},
 		)
 
-		// wait until services are ready
-		glog.V(1).Infof("Waiting for service store to be ready")
-		go c.serviceController.Run(wait.NeverStop)
-		for {
-			if c.serviceController.HasSynced() {
-				break
-			}
-			time.Sleep(time.Millisecond * 200)
-		}
-
-		go c.ingressController.Run(wait.NeverStop)
+		go c.serviceController.Run(stopCh)
+		go c.ingressController.Run(stopCh)
 	}
+	c.TriggerUpdate()
+
+	go wait.Forever(func() {
+		c.Debug()
+	}, 30*time.Second)
 
 	for {
 		conn, err := listener.Accept()
@@ -359,7 +353,7 @@ func (p *Proxy) Handle(conn net.Conn, connectionID string) {
 	defer func(s time.Time) {
 		err := conn.Close()
 		if err != nil {
-			glog.Errorf("[%s] Failed closing connection: %v", connectionID, err)
+			glog.V(0).Infof("[%s] Failed closing connection: %v", connectionID, err)
 			metrics.IncErrors(metrics.Error)
 		}
 		metrics.DecConnections()
@@ -401,14 +395,14 @@ func (p *Proxy) Handle(conn net.Conn, connectionID string) {
 	))
 	if err != nil {
 		metrics.IncErrors(metrics.Error)
-		glog.Errorf("[%s] Error connecting to backend: %v", connectionID, err)
+		glog.V(0).Infof("[%s] Error connecting to backend: %v", connectionID, err)
 		return
 	}
 
 	defer func() {
 		err := clientConn.Close()
 		if err != nil {
-			glog.Errorf("[%s] Failed closing client connection: %v", connectionID, err)
+			glog.V(0).Infof("[%s] Failed closing client connection: %v", connectionID, err)
 			metrics.IncErrors(metrics.Error)
 		}
 	}()
@@ -430,7 +424,7 @@ func Copycat(client, server net.Conn, connectionID string) {
 		glog.V(7).Infof("[%s] Established connection %s -> %s", connectionID, s.RemoteAddr().String(), c.RemoteAddr().String())
 		_, err := io.Copy(s, c)
 		if err != nil && !strings.Contains(err.Error(), ConnectionClosedErr) {
-			glog.Errorf("[%s] Failed copying connection data: %v", connectionID, err)
+			glog.V(0).Infof("[%s] Failed copying connection data: %v", connectionID, err)
 			metrics.IncErrors(metrics.Error)
 		}
 		glog.V(7).Infof("[%s] Destroyed connection %s -> %s", connectionID, s.RemoteAddr().String(), c.RemoteAddr().String())

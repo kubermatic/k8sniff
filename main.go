@@ -25,8 +25,6 @@ import (
 	"fmt"
 
 	"github.com/kubermatic/k8sniff/metrics"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 )
 
 func main() {
@@ -42,13 +40,10 @@ func main() {
 	}
 	config.Kubernetes.Kubeconfig = kubeconfig
 
-	cfg, err := clientcmd.BuildConfigFromFlags("", config.Kubernetes.Kubeconfig)
-	if err != nil {
-		panic(err.Error())
-	}
-	config.Kubernetes.Client = kubernetes.NewForConfigOrDie(cfg)
-
 	go metrics.Serve(fmt.Sprintf("%s:%d", config.Metrics.Host, config.Metrics.Port), config.Metrics.Path)
 
-	panic(config.Serve())
+	stop := make(chan struct{})
+	defer close(stop)
+	go panic(config.Serve(stop))
+	<-stop
 }
