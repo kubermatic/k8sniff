@@ -31,6 +31,7 @@ import (
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
+	"strings"
 )
 
 const (
@@ -117,7 +118,39 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
+	config.setDefaultsIfUnset()
+
 	glog.V(5).Infof("Read config: %v", config)
 
 	return &config, err
+}
+
+func (c *Config) setDefaultsIfUnset() {
+	if c.Bind.Port == 0 {
+		c.Bind.Port = 8443
+	}
+
+	if c.Bind.Host == "" {
+		glog.V(5).Infof("Bind host not set. Using default: 0.0.0.0")
+		c.Bind.Host =  "0.0.0.0"
+	}
+
+	if c.Metrics.Host == "" {
+		glog.V(5).Infof("Metrics host not set. Using default: 0.0.0.0")
+		c.Metrics.Host = c.Bind.Host
+	}
+
+	if c.Metrics.Port == 0 {
+		glog.V(5).Infof("Metrics port not set. Using default: 9091")
+		c.Metrics.Port = 9091
+	}
+
+	if c.Metrics.Path == "" {
+		glog.V(5).Infof("Metrics path not set. Using default: /metrics")
+		c.Metrics.Path = "/metrics"
+	}
+	if !strings.HasPrefix(c.Metrics.Path, "/") {
+		c.Metrics.Path = "/"+c.Metrics.Path
+	}
+
 }
