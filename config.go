@@ -29,9 +29,10 @@ import (
 
 	"github.com/golang/glog"
 
+	"strings"
+
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
-	"strings"
 )
 
 const (
@@ -132,7 +133,7 @@ func (c *Config) setDefaultsIfUnset() {
 
 	if c.Bind.Host == "" {
 		glog.V(5).Infof("Bind host not set. Using default: 0.0.0.0")
-		c.Bind.Host =  "0.0.0.0"
+		c.Bind.Host = "0.0.0.0"
 	}
 
 	if c.Metrics.Host == "" {
@@ -150,7 +151,7 @@ func (c *Config) setDefaultsIfUnset() {
 		c.Metrics.Path = "/metrics"
 	}
 	if !strings.HasPrefix(c.Metrics.Path, "/") {
-		c.Metrics.Path = "/"+c.Metrics.Path
+		c.Metrics.Path = "/" + c.Metrics.Path
 	}
 
 }
