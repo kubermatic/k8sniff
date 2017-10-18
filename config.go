@@ -25,11 +25,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/golang/glog"
-
-	"strings"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
