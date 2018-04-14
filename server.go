@@ -332,15 +332,15 @@ func (c *Config) Serve(stopCh chan struct{}) error {
 	}, 30*time.Second)
 
 	for {
-		conn, err := listener.Accept()
+		cnx, err := listener.Accept()
 		if err != nil {
 			metrics.IncErrors(metrics.Error)
 			return err
 		}
-
+		conn := cnx.(*net.TCPConn)
 		connectionID := RandomString(8)
-		glog.V(4).Infof(
-			"[%s] Proxy: %s -> %s",
+		glog.V(3).Infof(
+			"[%s] Accepted connection - remoteaddr:%s localaddr:%s",
 			connectionID,
 			conn.RemoteAddr(),
 			conn.LocalAddr(),
@@ -349,7 +349,7 @@ func (c *Config) Serve(stopCh chan struct{}) error {
 	}
 }
 
-func (p *Proxy) Handle(conn net.Conn, connectionID string) {
+func (p *Proxy) Handle(conn *net.TCPConn, connectionID string) {
 	metrics.IncConnections()
 	start := now()
 	defer func(s time.Time) {
@@ -357,6 +357,8 @@ func (p *Proxy) Handle(conn net.Conn, connectionID string) {
 		if err != nil {
 			glog.V(0).Infof("[%s] Failed closing connection: %v", connectionID, err)
 			metrics.IncErrors(metrics.Error)
+		} else {
+			glog.V(3).Infof("[%s] Closed connection", connectionID)
 		}
 		metrics.DecConnections()
 		metrics.ConnectionTime(now().Sub(s))
@@ -380,19 +382,19 @@ func (p *Proxy) Handle(conn net.Conn, connectionID string) {
 			glog.V(4).Infof("[%s] No proxy matched %s", connectionID, hostname)
 			return
 		} else {
-			glog.V(4).Infof("[%s] Host found %s", connectionID, proxy.Host)
+			glog.V(3).Infof("[%s] Hostname %s maps to %s", connectionID, hostname, proxy.Host)
 		}
 	} else {
-		glog.V(6).Info("[%s] Parsed request without hostname", connectionID)
+		glog.V(3).Info("[%s] No hostname found, attempting default proxy", connectionID)
 
 		proxy = p.Default
 		if proxy == nil {
-			glog.V(4).Info("[%s] No default proxy", connectionID)
+			glog.V(3).Info("[%s] No default proxy", connectionID)
 			return
 		}
 	}
 
-	clientConn, err := net.Dial("tcp", fmt.Sprintf(
+	clientCnx, err := net.Dial("tcp", fmt.Sprintf(
 		"%s:%d", proxy.Host, proxy.Port,
 	))
 	if err != nil {
@@ -400,6 +402,7 @@ func (p *Proxy) Handle(conn net.Conn, connectionID string) {
 		glog.V(0).Infof("[%s] Error connecting to backend: %v", connectionID, err)
 		return
 	}
+	clientConn := clientCnx.(*net.TCPConn)
 
 	defer func() {
 		err := clientConn.Close()
@@ -419,29 +422,42 @@ func (p *Proxy) Handle(conn net.Conn, connectionID string) {
 	Copycat(clientConn, conn, connectionID)
 }
 
-func Copycat(client, server net.Conn, connectionID string) {
+func Copycat(client *net.TCPConn, server *net.TCPConn, connectionID string) {
 	glog.V(6).Infof("[%s] Initiating copy between %s and %s", connectionID, client.RemoteAddr().String(), server.RemoteAddr().String())
 
-	doCopy := func(s, c net.Conn, cancel chan<- bool) {
-		glog.V(7).Infof("[%s] Established connection %s -> %s", connectionID, s.RemoteAddr().String(), c.RemoteAddr().String())
+	doCopy := func(s, c *net.TCPConn, cancel chan<- string) {
+		glog.V(7).Infof("[%s] Established connection %s -> %s", connectionID, c.RemoteAddr().String(), s.RemoteAddr().String())
 		_, err := io.Copy(s, c)
+		reason := "EOF"
+		if err != nil {
+			reason = err.Error()
+		}
+		glog.V(3).Infof("[%s] Copying from %s to %s finished because: %s",
+			connectionID, c.RemoteAddr().String(), s.RemoteAddr().String(), 
+			reason)
 		if err != nil && !strings.Contains(err.Error(), ConnectionClosedErr) && !strings.Contains(err.Error(), ConnectionResetErr) {
 			glog.V(0).Infof("[%s] Failed copying connection data: %v", connectionID, err)
 			metrics.IncErrors(metrics.Error)
 		}
-		glog.V(7).Infof("[%s] Destroyed connection %s -> %s", connectionID, s.RemoteAddr().String(), c.RemoteAddr().String())
-		cancel <- true
+		glog.V(4).Infof("[%s] Copy finished for %s -> %s", connectionID, c.RemoteAddr().String(), s.RemoteAddr().String())			
+		s.CloseWrite() // propagate EOF signal to destination
+		cancel <- c.RemoteAddr().String()
 	}
 
-	cancel := make(chan bool, 2)
+	cancel := make(chan string, 2)
 
 	go doCopy(server, client, cancel)
 	go doCopy(client, server, cancel)
 
+	closedSrc := <- cancel
+	glog.V(3).Infof("[%s] 1st source to close: %s", connectionID, closedSrc)
+	timer := time.NewTimer(2 * time.Second)
 	select {
-	case <-cancel:
-		glog.V(6).Infof("[%s] Disconnected", connectionID)
-		return
+	case closedSrc = <-cancel:
+		glog.V(3).Infof("[%s] 2nd source to close: %s (all done)", connectionID, closedSrc)
+		timer.Stop()
+	case <- timer.C:
+		glog.V(3).Infof("[%s] timed out waiting for 2nd source to close", connectionID)
 	}
 }
 
