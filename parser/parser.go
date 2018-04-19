@@ -59,11 +59,11 @@ func GetSNIBlock(data []byte) ([]byte, error) {
 		if index >= len(data) {
 			break
 		}
-		length := int((data[index] << 8) + data[index+1])
+		length := int(data[index])<<8 + data[index+1]
 		endIndex := index + 2 + length
 		if data[index+2] == 0x00 { /* SNI */
 			sni := data[index+3:]
-			sniLength := int((sni[0] << 8) + sni[1])
+			sniLength := int(sni[0])<<8 + sni[1]
 			return sni[2 : sniLength+2], nil
 		}
 		index = endIndex
@@ -81,14 +81,14 @@ func GetSNBlock(data []byte) ([]byte, error) {
 		return []byte{}, fmt.Errorf("Not enough bytes to be an SN block")
 	}
 
-	extensionLength := int((data[index] << 8) + data[index+1])
+	extensionLength := int(data[index])<<8 + data[index+1]
 	data = data[2 : extensionLength+2]
 
 	for {
 		if index >= len(data) {
 			break
 		}
-		length := int((data[index+2] << 8) + data[index+3])
+		length := int(data[index+2])<<8 + int(data[index+3])
 		endIndex := index + 4 + length
 		if data[index] == 0x00 && data[index+1] == 0x00 {
 			return data[index+4 : endIndex], nil
@@ -124,7 +124,7 @@ func GetExtensionBlock(data []byte) ([]byte, error) {
 	}
 
 	/* Index is at Cipher List Length bits */
-	if newIndex := (index + 2 + int((data[index]<<8)+data[index+1])); (newIndex + 1) < len(data) {
+	if newIndex := (index + 2 + int(data[index])<<8 + data[index+1]); (newIndex + 1) < len(data) {
 		index = newIndex
 	} else {
 		return []byte{}, fmt.Errorf("Not enough bytes for the Cipher List")
