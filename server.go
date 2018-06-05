@@ -208,10 +208,15 @@ func (c *Config) UpdateServers() error {
 			time.Sleep(time.Second)
 			return fmt.Errorf("failed to update proxy: %v", err)
 		}
-		glog.V(2).Infof("================================================")
-		glog.V(2).Infof("Updated servers. New servers:")
-		c.PrintCurrentServers(2)
-		glog.V(2).Infof("================================================")
+		if glog.V(4) {
+			glog.V(2).Infof("================================================")
+			glog.V(2).Infof("Updated servers. New servers:")
+			c.PrintCurrentServers(2)
+			glog.V(2).Infof("================================================")
+		} else {
+			glog.V(3).Infof("Updated servers. There are now %d servers",
+				len(c.Servers))
+		}
 	}
 
 	metrics.SetBackendCount(len(c.Servers) - 1)
@@ -385,7 +390,7 @@ func (p *Proxy) Handle(conn *net.TCPConn, connectionID string) {
 			glog.V(3).Infof("[%s] Hostname %s maps to %s", connectionID, hostname, proxy.Host)
 		}
 	} else {
-		glog.V(3).Info("[%s] No hostname found, attempting default proxy", connectionID)
+		glog.V(3).Infof("[%s] No hostname found, attempting default proxy", connectionID)
 
 		proxy = p.Default
 		if proxy == nil {
@@ -427,13 +432,13 @@ func Copycat(client *net.TCPConn, server *net.TCPConn, connectionID string) {
 
 	doCopy := func(s, c *net.TCPConn, cancel chan<- string) {
 		glog.V(7).Infof("[%s] Established connection %s -> %s", connectionID, c.RemoteAddr().String(), s.RemoteAddr().String())
-		_, err := io.Copy(s, c)
+		numWritten, err := io.Copy(s, c)
 		reason := "EOF"
 		if err != nil {
 			reason = err.Error()
 		}
-		glog.V(3).Infof("[%s] Copying from %s to %s finished because: %s",
-			connectionID, c.RemoteAddr().String(), s.RemoteAddr().String(), 
+		glog.V(3).Infof("[%s] Copied %d bytes from %s to %s, finished because: %s",
+			connectionID, numWritten, c.RemoteAddr().String(), s.RemoteAddr().String(),
 			reason)
 		if err != nil && !strings.Contains(err.Error(), ConnectionClosedErr) && !strings.Contains(err.Error(), ConnectionResetErr) {
 			glog.V(0).Infof("[%s] Failed copying connection data: %v", connectionID, err)
