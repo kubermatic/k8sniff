@@ -55,6 +55,7 @@ const (
 
 	ConnectionClosedErr = "use of closed network connection"
 	ConnectionResetErr  = "connection reset by peer"
+	MaxTeardownTimeInSeconds = 35
 )
 
 // now provides func() time.Time
@@ -447,6 +448,7 @@ func Copycat(client *net.TCPConn, server *net.TCPConn, connectionID string) {
 		glog.V(4).Infof("[%s] Copy finished for %s -> %s", connectionID, c.RemoteAddr().String(), s.RemoteAddr().String())			
 		s.CloseWrite() // propagate EOF signal to destination
 		cancel <- c.RemoteAddr().String()
+		metrics.BytesCopied(numWritten)
 	}
 
 	cancel := make(chan string, 2)
@@ -456,14 +458,18 @@ func Copycat(client *net.TCPConn, server *net.TCPConn, connectionID string) {
 
 	closedSrc := <- cancel
 	glog.V(3).Infof("[%s] 1st source to close: %s", connectionID, closedSrc)
-	timer := time.NewTimer(2 * time.Second)
+	start := time.Now()
+	timer := time.NewTimer(MaxTeardownTimeInSeconds * time.Second)
 	select {
 	case closedSrc = <-cancel:
 		glog.V(3).Infof("[%s] 2nd source to close: %s (all done)", connectionID, closedSrc)
 		timer.Stop()
 	case <- timer.C:
 		glog.V(3).Infof("[%s] timed out waiting for 2nd source to close", connectionID)
+		metrics.TeardownTimeout()
 	}
+	elapsed := time.Now().Sub(start)
+	metrics.TeardownTime(elapsed)
 }
 
 func RandomString(strlen int) string {

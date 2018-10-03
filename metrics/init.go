@@ -11,4 +11,7 @@ func init() {
 	prometheus.MustRegister(connGauge)
 	prometheus.MustRegister(errorCounterVec)
 	prometheus.MustRegister(backendGauge)
+	prometheus.MustRegister(teardownDurationsHisto)
+	prometheus.MustRegister(bytesCopiedHisto)
+	prometheus.MustRegister(teardownTimeoutCtr)
 }
