@@ -22,6 +22,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/platform9/cnxmd/pkg/cnxmd"
 	"io"
 	"math/rand"
 	"net"
@@ -34,7 +35,6 @@ import (
 	"github.com/golang/glog"
 	"github.com/kubermatic/k8sniff/metrics"
 	"github.com/kubermatic/k8sniff/parser"
-
 	"k8s.io/api/core/v1"
 	"k8s.io/api/extensions/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -377,29 +377,42 @@ func (p *Proxy) Handle(conn *net.TCPConn, connectionID string) {
 		glog.V(4).Infof("[%s] Error reading the first 4k of the connection: %v", connectionID, err)
 		return
 	}
-
 	var proxy *Server
-	hostname, hostnameErr := parser.GetHostname(data[:])
-	if hostnameErr == nil {
-		glog.V(6).Infof("[%s] Parsed hostname: %s", connectionID, hostname)
-
-		proxy = p.Get(hostname)
-		if proxy == nil {
-			glog.V(4).Infof("[%s] No proxy matched %s", connectionID, hostname)
+	var hostname string
+	headerBytes, kv, err := cnxmd.Parse(data[:length])
+	if err == nil {
+		glog.V(3).Infof("[%s] found CNXCMD header of %d bytes", connectionID, headerBytes)
+		hostname = kv["host"]
+		if hostname == "" {
+			metrics.IncErrors(metrics.Error)
+			glog.V(3).Infof("[%s] CNXCMD header contains no host key", connectionID)
 			return
-		} else {
-			glog.V(3).Infof("[%s] Hostname %s maps to %s", connectionID, hostname, proxy.Host)
 		}
+		glog.V(3).Infof("[%s] CNXCMD hostname: %s", connectionID, hostname)
+		proxy = p.Get(hostname)
 	} else {
-		glog.V(3).Infof("[%s] No hostname found, attempting default proxy", connectionID)
+		headerBytes = 0
+		hostname, hostnameErr := parser.GetHostname(data[:])
+		if hostnameErr == nil {
+			glog.V(6).Infof("[%s] Parsed hostname: %s", connectionID, hostname)
+			proxy = p.Get(hostname)
+		} else {
+			glog.V(3).Infof("[%s] No hostname found, attempting default proxy", connectionID)
 
-		proxy = p.Default
-		if proxy == nil {
-			glog.V(3).Info("[%s] No default proxy", connectionID)
-			return
+			proxy = p.Default
+			if proxy == nil {
+				glog.V(3).Info("[%s] No default proxy", connectionID)
+				return
+			}
 		}
 	}
-
+	if proxy == nil {
+		glog.V(4).Infof("[%s] No proxy matched %s", connectionID, hostname)
+		return
+	} else {
+		glog.V(3).Infof("[%s] Hostname %s maps to %s", connectionID, hostname, proxy.Host)
+	}
+	data = data[headerBytes:length]
 	clientCnx, err := net.Dial("tcp", fmt.Sprintf(
 		"%s:%d", proxy.Host, proxy.Port,
 	))
@@ -418,7 +431,7 @@ func (p *Proxy) Handle(conn *net.TCPConn, connectionID string) {
 		}
 	}()
 
-	n, err := clientConn.Write(data[:length])
+	n, err := clientConn.Write(data)
 	glog.V(7).Infof("[%s] Wrote %d bytes", connectionID, n)
 	if err != nil {
 		metrics.IncErrors(metrics.Info)
