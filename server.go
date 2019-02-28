@@ -379,20 +379,23 @@ func (p *Proxy) Handle(conn *net.TCPConn, connectionID string) {
 	}
 	var proxy *Server
 	var hostname string
+	hostnameType := "SNI"
 	headerBytes, kv, err := cnxmd.Parse(data[:length])
 	if err == nil {
-		glog.V(3).Infof("[%s] found CNXCMD header of %d bytes", connectionID, headerBytes)
+		hostnameType = "CNXMD"
+		glog.V(4).Infof("[%s] found CNXMD header of %d bytes", connectionID, headerBytes)
 		hostname = kv["host"]
 		if hostname == "" {
 			metrics.IncErrors(metrics.Error)
-			glog.V(3).Infof("[%s] CNXCMD header contains no host key", connectionID)
+			glog.V(3).Infof("[%s] CNXMD header contains no host key", connectionID)
 			return
 		}
-		glog.V(3).Infof("[%s] CNXCMD hostname: %s", connectionID, hostname)
+		glog.V(4).Infof("[%s] CNXMD hostname: %s", connectionID, hostname)
 		proxy = p.Get(hostname)
 	} else {
 		headerBytes = 0
-		hostname, hostnameErr := parser.GetHostname(data[:])
+		var hostnameErr error
+		hostname, hostnameErr = parser.GetHostname(data[:])
 		if hostnameErr == nil {
 			glog.V(6).Infof("[%s] Parsed hostname: %s", connectionID, hostname)
 			proxy = p.Get(hostname)
@@ -410,7 +413,8 @@ func (p *Proxy) Handle(conn *net.TCPConn, connectionID string) {
 		glog.V(4).Infof("[%s] No proxy matched %s", connectionID, hostname)
 		return
 	} else {
-		glog.V(3).Infof("[%s] Hostname %s maps to %s", connectionID, hostname, proxy.Host)
+		glog.V(3).Infof("[%s] %s hostname %s maps to %s",
+			connectionID, hostnameType, hostname, proxy.Host)
 	}
 	data = data[headerBytes:length]
 	clientCnx, err := net.Dial("tcp", fmt.Sprintf(
