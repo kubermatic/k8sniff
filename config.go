@@ -85,11 +85,12 @@ type Bind struct {
 }
 
 type Server struct {
-	Default bool
-	Regexp  bool
-	Host    string
-	Names   []string
-	Port    int
+	Default     bool
+	Regexp      bool
+	Host        string
+	Names       []string
+	IngressName string
+	Port        int
 }
 
 // Valid returns an error if the metrics config is invalid

@@ -53,8 +53,8 @@ const (
 	// to either nginxIngressClass or the empty string.
 	ingressClassKey = "kubernetes.io/ingress.class"
 
-	ConnectionClosedErr = "use of closed network connection"
-	ConnectionResetErr  = "connection reset by peer"
+	ConnectionClosedErr      = "use of closed network connection"
+	ConnectionResetErr       = "connection reset by peer"
 	MaxTeardownTimeInSeconds = 35
 )
 
@@ -172,6 +172,7 @@ func (c *Config) UpdateServers() error {
 				glog.V(0).Infof("Ingress %s error with default backend, skipping: %v", name, err)
 			} else {
 				s.Default = true
+				s.IngressName = name
 				servers = append(servers, *s)
 			}
 		}
@@ -194,6 +195,7 @@ func (c *Config) UpdateServers() error {
 					continue
 				}
 				s.Names = []string{r.Host}
+				s.IngressName = name
 				glog.V(6).Infof("Adding backend %q -> %s:%d", r.Host, s.Host, s.Port)
 				servers = append(servers, *s)
 			}
@@ -231,7 +233,7 @@ func (c *Config) PrintCurrentServers(logLevel glog.Level) {
 		if hostnames == "" {
 			hostnames = "default backend"
 		}
-		glog.V(logLevel).Infof("%s -> %s", hostnames, s.Host)
+		glog.V(logLevel).Infof("%s -> %s (%s)", hostnames, s.Host, s.IngressName)
 	}
 }
 
@@ -417,15 +419,16 @@ func (p *Proxy) Handle(conn *net.TCPConn, connectionID string) {
 			connectionID, hostnameType, hostname, proxy.Host)
 	}
 	data = data[headerBytes:length]
-	clientCnx, err := net.Dial("tcp", fmt.Sprintf(
-		"%s:%d", proxy.Host, proxy.Port,
-	))
+	proxyBackend := fmt.Sprintf("%s:%d", proxy.Host, proxy.Port)
+	clientCnx, err := net.Dial("tcp", proxyBackend)
 	if err != nil {
 		metrics.IncErrors(metrics.Error)
 		glog.V(0).Infof("[%s] Error connecting to backend: %v", connectionID, err)
 		return
 	}
 	clientConn := clientCnx.(*net.TCPConn)
+	proxyIngressBackend := fmt.Sprintf("%s:%d", proxy.IngressName, proxy.Port)
+	metrics.IncBackendConnections(proxyIngressBackend)
 
 	defer func() {
 		err := clientConn.Close()
@@ -433,6 +436,7 @@ func (p *Proxy) Handle(conn *net.TCPConn, connectionID string) {
 			glog.V(0).Infof("[%s] Failed closing client connection: %v", connectionID, err)
 			metrics.IncErrors(metrics.Error)
 		}
+		metrics.DecBackendConnections(proxyIngressBackend)
 	}()
 
 	n, err := clientConn.Write(data)
@@ -442,13 +446,14 @@ func (p *Proxy) Handle(conn *net.TCPConn, connectionID string) {
 		glog.V(7).Infof("[%s] Error sending data to backend: %v", connectionID, err)
 		return
 	}
-	Copycat(clientConn, conn, connectionID)
+	metrics.AddBackendBytesSent(proxyIngressBackend, int64(n))
+	Copycat(clientConn, conn, connectionID, proxyIngressBackend)
 }
 
-func Copycat(client *net.TCPConn, server *net.TCPConn, connectionID string) {
+func Copycat(client *net.TCPConn, server *net.TCPConn, connectionID string, backend string) {
 	glog.V(6).Infof("[%s] Initiating copy between %s and %s", connectionID, client.RemoteAddr().String(), server.RemoteAddr().String())
 
-	doCopy := func(s, c *net.TCPConn, cancel chan<- string) {
+	doCopy := func(s, c *net.TCPConn, cancel chan<- string, receiving bool) {
 		glog.V(7).Infof("[%s] Established connection %s -> %s", connectionID, c.RemoteAddr().String(), s.RemoteAddr().String())
 		numWritten, err := io.Copy(s, c)
 		reason := "EOF"
@@ -462,18 +467,23 @@ func Copycat(client *net.TCPConn, server *net.TCPConn, connectionID string) {
 			glog.V(0).Infof("[%s] Failed copying connection data: %v", connectionID, err)
 			metrics.IncErrors(metrics.Error)
 		}
-		glog.V(4).Infof("[%s] Copy finished for %s -> %s", connectionID, c.RemoteAddr().String(), s.RemoteAddr().String())			
+		glog.V(4).Infof("[%s] Copy finished for %s -> %s", connectionID, c.RemoteAddr().String(), s.RemoteAddr().String())
 		s.CloseWrite() // propagate EOF signal to destination
 		cancel <- c.RemoteAddr().String()
+		if receiving {
+			metrics.AddBackendBytesRcvd(backend, numWritten)
+		} else {
+			metrics.AddBackendBytesSent(backend, numWritten)
+		}
 		metrics.BytesCopied(numWritten)
 	}
 
 	cancel := make(chan string, 2)
 
-	go doCopy(server, client, cancel)
-	go doCopy(client, server, cancel)
+	go doCopy(server, client, cancel, true)
+	go doCopy(client, server, cancel, false)
 
-	closedSrc := <- cancel
+	closedSrc := <-cancel
 	glog.V(3).Infof("[%s] 1st source to close: %s", connectionID, closedSrc)
 	start := time.Now()
 	timer := time.NewTimer(MaxTeardownTimeInSeconds * time.Second)
@@ -481,7 +491,7 @@ func Copycat(client *net.TCPConn, server *net.TCPConn, connectionID string) {
 	case closedSrc = <-cancel:
 		glog.V(3).Infof("[%s] 2nd source to close: %s (all done)", connectionID, closedSrc)
 		timer.Stop()
-	case <- timer.C:
+	case <-timer.C:
 		glog.V(3).Infof("[%s] timed out waiting for 2nd source to close", connectionID)
 		metrics.TeardownTimeout()
 	}
