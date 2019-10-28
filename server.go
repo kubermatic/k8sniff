@@ -453,7 +453,7 @@ func (p *Proxy) Handle(conn *net.TCPConn, connectionID string) {
 func Copycat(client *net.TCPConn, server *net.TCPConn, connectionID string, backend string) {
 	glog.V(6).Infof("[%s] Initiating copy between %s and %s", connectionID, client.RemoteAddr().String(), server.RemoteAddr().String())
 
-	doCopy := func(s, c *net.TCPConn, cancel chan<- string, receiving bool) {
+	doCopy := func(s, c *net.TCPConn, cancel chan<- string, bytesProcessedCtrCallback func(string, int64)) {
 		glog.V(7).Infof("[%s] Established connection %s -> %s", connectionID, c.RemoteAddr().String(), s.RemoteAddr().String())
 		numWritten, err := io.Copy(s, c)
 		reason := "EOF"
@@ -470,18 +470,14 @@ func Copycat(client *net.TCPConn, server *net.TCPConn, connectionID string, back
 		glog.V(4).Infof("[%s] Copy finished for %s -> %s", connectionID, c.RemoteAddr().String(), s.RemoteAddr().String())
 		s.CloseWrite() // propagate EOF signal to destination
 		cancel <- c.RemoteAddr().String()
-		if receiving {
-			metrics.AddBackendBytesRcvd(backend, numWritten)
-		} else {
-			metrics.AddBackendBytesSent(backend, numWritten)
-		}
+		bytesProcessedCtrCallback(backend, numWritten)
 		metrics.BytesCopied(numWritten)
 	}
 
 	cancel := make(chan string, 2)
 
-	go doCopy(server, client, cancel, true)
-	go doCopy(client, server, cancel, false)
+	go doCopy(server, client, cancel, metrics.AddBackendBytesRcvd)
+	go doCopy(client, server, cancel, metrics.AddBackendBytesSent)
 
 	closedSrc := <-cancel
 	glog.V(3).Infof("[%s] 1st source to close: %s", connectionID, closedSrc)
