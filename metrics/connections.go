@@ -16,6 +16,13 @@ var (
 			Help: "Number of opened TCP connections",
 		},
 	)
+	backendConnGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: Prefix + "opened_backend_connections_count",
+			Help: "Number of established backend TCP connections",
+		},
+		[]string{"backend"},
+	)
 	teardownDurationsHisto = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name: Prefix + "teardown_durations_histogram_seconds",
 		Help: "Connection teardown duration distributions.",
@@ -26,7 +33,7 @@ var (
 		Help: "Bytes copied distributions.",
 		Buckets: []float64{1024.0, 2048.0, 4096.0, 8192.0, 16384.0, 32768.0},
 	})
-		teardownTimeoutCtr = prometheus.NewCounter(prometheus.CounterOpts{
+	teardownTimeoutCtr = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: Prefix + "teardown_timeouts",
 		Help: "Number of connection teardown timeouts.",
 	})
@@ -39,6 +46,18 @@ func IncConnections() {
 
 func DecConnections() {
 	connGauge.Dec()
+}
+
+// IncBackendConnections increments the total connections currently established
+// for a given backend
+func IncBackendConnections(backend string) {
+	g, _ := backendConnGauge.GetMetricWithLabelValues(backend)
+	g.Inc()
+}
+
+func DecBackendConnections(backend string) {
+	g, _ := backendConnGauge.GetMetricWithLabelValues(backend)
+	g.Dec()
 }
 
 // ConnectionTime gather the duration of a connection
