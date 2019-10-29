@@ -6,6 +6,14 @@ BUILD_SRC_DIR=$(BUILD_DIR)/src/github.com/kubermatic
 K8SNIFF_SRC_DIR=$(BUILD_SRC_DIR)/k8sniff
 K8SNIFF_EXE=$(BIN_DIR)/k8sniff
 
+GO_DEPS := \
+	$(GOSRC)/github.com/prometheus/client_golang \
+	$(GOSRC)/github.com/platform9/cnxmd \
+	$(GOSRC)/github.com/golang/glog
+
+$(GO_DEPS): $(GOPATH_DIR)
+	go get $(subst $(GOSRC)/,,$@)
+
 # Override with your own Docker registry tag(s)
 K8SNIFF_IMAGE_TAG ?= platform9systems/k8sniff
 K8SNIFF_DEVEL_IMAGE_TAG ?= platform9systems/k8sniff-devel
@@ -26,7 +34,7 @@ local-k8sniff:
 local-k8sniff-dbg:
 	cd $(SRC_DIR)/cmd/k8sniff && go build -gcflags='-N -l' -o $${GOPATH}/bin/k8sniff-dbg
 
-$(K8SNIFF_EXE): | $(BIN_DIR)
+$(K8SNIFF_EXE): | $(BIN_DIR) $(GO_DEPS)
 	go build -o $(K8SNIFF_EXE)
 
 k8sniff: $(K8SNIFF_EXE)
