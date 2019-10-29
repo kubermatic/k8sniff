@@ -5,6 +5,7 @@ BIN_DIR=$(BUILD_DIR)/bin
 BUILD_SRC_DIR=$(BUILD_DIR)/src/github.com/kubermatic
 K8SNIFF_SRC_DIR=$(BUILD_SRC_DIR)/k8sniff
 K8SNIFF_EXE=$(BIN_DIR)/k8sniff
+GOSRC=$(GOPATH_DIR)/src
 
 GO_DEPS := \
 	$(GOSRC)/github.com/prometheus/client_golang \
