@@ -8,6 +8,18 @@ DEP_SRC=$(GOSRC)/github.com/golang/dep
 DEP_EXE=$(DEP_SRC)/cmd/dep/dep
 VENDOR_DIR=$(K8SNIFF_SRC_DIR)/vendor
 
+IMAGE_NAME := k8sniff
+
+# Override with your own Docker registry tag(s)
+REPO_TAG ?= platform9/$(IMAGE_NAME)
+
+VERSION ?= 1.0.0
+BUILD_NUMBER ?= 000
+BUILD_ID := $(BUILD_NUMBER)
+IMAGE_TAG ?= $(VERSION)-$(BUILD_ID)
+FULL_TAG := $(REPO_TAG):$(IMAGE_TAG)
+TAG_FILE := $(BUILD_DIR)/container-full-tag
+
 GO_DEPS := \
 	$(GOSRC)/github.com/golang/glog \
 	$(GOSRC)/github.com/prometheus/client_golang/prometheus \
@@ -15,10 +27,6 @@ GO_DEPS := \
 
 $(GO_DEPS): $(GOPATH_DIR)
 	go get $(subst $(GOSRC)/,,$@)
-
-# Override with your own Docker registry tag(s)
-K8SNIFF_IMAGE_TAG ?= platform9systems/k8sniff
-K8SNIFF_DEVEL_IMAGE_TAG ?= platform9systems/k8sniff-devel
 
 $(DEP_SRC):
 	go get -u github.com/golang/dep/cmd/dep
@@ -49,10 +57,11 @@ clean:
 k8sniff-clean:
 	rm -f $(K8SNIFF_EXE)
 
-k8sniff-image: $(K8SNIFF_EXE)
-	docker build --tag $(K8SNIFF_IMAGE_TAG) -f support/Dockerfile .
-	docker push $(K8SNIFF_IMAGE_TAG)
+$(TAG_FILE): $(K8SNIFF_EXE)
+	docker build --tag $(FULL_TAG) -f support/Dockerfile .
+	echo -n $(FULL_TAG) > $@
 
-k8sniff-image-devel: $(K8SNIFF_EXE)
-	docker build --tag $(K8SNIFF_DEVEL_IMAGE_TAG) -f support/k8sniff-devel/Dockerfile .
-	docker push $(K8SNIFF_DEVEL_IMAGE_TAG)
+image: $(TAG_FILE)
+
+push: $(TAG_FILE)
+	docker push `cat $(TAG_FILE)` && rm -f $(TAG_FILE)
