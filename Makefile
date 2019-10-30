@@ -20,14 +20,6 @@ IMAGE_TAG ?= $(VERSION)-$(BUILD_ID)
 FULL_TAG := $(REPO_TAG):$(IMAGE_TAG)
 TAG_FILE := $(BUILD_DIR)/container-full-tag
 
-GO_DEPS := \
-	$(GOSRC)/github.com/golang/glog \
-	$(GOSRC)/github.com/prometheus/client_golang/prometheus \
-	$(GOSRC)/github.com/platform9/cnxmd/pkg/cnxmd
-
-$(GO_DEPS): $(GOPATH_DIR)
-	go get $(subst $(GOSRC)/,,$@)
-
 $(DEP_SRC):
 	go get -u github.com/golang/dep/cmd/dep
 
@@ -46,13 +38,19 @@ local-k8sniff:
 local-k8sniff-dbg:
 	cd $(SRC_DIR)/cmd/k8sniff && go build -gcflags='-N -l' -o $${GOPATH}/bin/k8sniff-dbg
 
-$(K8SNIFF_EXE): | $(BIN_DIR) $(GO_DEPS) $(VENDOR_DIR)
+$(K8SNIFF_EXE): | $(BIN_DIR) $(VENDOR_DIR)
 	go build -o $(K8SNIFF_EXE)
+
+dep: $(DEP_EXE)
 
 k8sniff: $(K8SNIFF_EXE)
 
 clean:
-	rm -rf $(BUILD_DIR) $(DEP_SRC) $(VENDOR_DIR) $(TAG_FILE)
+	rm -rf $(BUILD_DIR) $(DEP_SRC) $(VENDOR_DIR)
+
+# dangerous: use with care. For testing
+clean-go-deps:
+	cd $(GOPATH)/src/github.com && ls | grep -v kubermatic | xargs rm -rf
 
 k8sniff-clean:
 	rm -f $(K8SNIFF_EXE)
