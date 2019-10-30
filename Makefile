@@ -52,7 +52,7 @@ $(K8SNIFF_EXE): | $(BIN_DIR) $(GO_DEPS) $(VENDOR_DIR)
 k8sniff: $(K8SNIFF_EXE)
 
 clean:
-	rm -rf $(BUILD_DIR) $(DEP_SRC) $(VENDOR_DIR) $(GO_DEPS)
+	rm -rf $(BUILD_DIR) $(DEP_SRC) $(VENDOR_DIR) $(TAG_FILE)
 
 k8sniff-clean:
 	rm -f $(K8SNIFF_EXE)
@@ -64,4 +64,4 @@ $(TAG_FILE): $(K8SNIFF_EXE)
 image: $(TAG_FILE)
 
 push: $(TAG_FILE)
-	docker push `cat $(TAG_FILE)` && rm -f $(TAG_FILE)
+	docker push `cat $(TAG_FILE)` && docker rmi `cat $(TAG_FILE)`
