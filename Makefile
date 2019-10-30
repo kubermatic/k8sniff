@@ -62,4 +62,7 @@ $(TAG_FILE): $(K8SNIFF_EXE)
 image: $(TAG_FILE)
 
 push: $(TAG_FILE)
-	docker push `cat $(TAG_FILE)` && docker rmi `cat $(TAG_FILE)`
+	(docker push $(FULL_TAG) || \
+		(echo -n $${DOCKER_PASSWORD} | docker login --password-stdin -u $${DOCKER_USERNAME} && \
+		docker push $(FULL_TAG) && docker logout))
+	docker rmi $(FULL_TAG)
