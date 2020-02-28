@@ -120,7 +120,7 @@ func (p *Proxy) Update(c *Config) error {
 	return nil
 }
 
-func (c *Config) UpdateServers() error {
+func (c *Config) UpdateServers(reason string) error {
 	class := c.Kubernetes.IngressClass
 	if class == "" {
 		class = "k8sniff"
@@ -155,7 +155,7 @@ func (c *Config) UpdateServers() error {
 		}, nil
 	}
 
-	servers := []Server{}
+	var servers []Server
 	ingressList := c.ingressStore.List()
 	for _, i := range ingressList {
 		i := i.(*v1beta1.Ingress)
@@ -217,8 +217,8 @@ func (c *Config) UpdateServers() error {
 			c.PrintCurrentServers(2)
 			glog.V(2).Infof("================================================")
 		} else {
-			glog.V(3).Infof("Updated servers. There are now %d servers",
-				len(c.Servers))
+			glog.V(3).Infof("Updated servers because '%s'. There are now %d servers",
+				reason, len(c.Servers))
 		}
 	}
 
@@ -244,11 +244,11 @@ func (c *Config) Debug() {
 	glog.V(4).Info("================================================")
 }
 
-func (c *Config) TriggerUpdate() {
+func (c *Config) TriggerUpdate(reason string) {
 	if !c.ControllersHaveSynced() {
 		return
 	}
-	err := c.UpdateServers()
+	err := c.UpdateServers(reason)
 	if err != nil {
 		metrics.IncErrors(metrics.Info)
 		glog.V(0).Infof("failed to update servers list: %v", err)
@@ -295,13 +295,29 @@ func (c *Config) Serve(stopCh chan struct{}) error {
 			30*time.Minute,
 			cache.ResourceEventHandlerFuncs{
 				AddFunc: func(obj interface{}) {
-					go c.TriggerUpdate()
+					ing := obj.(*v1beta1.Ingress)
+					msg := fmt.Sprintf("ingress added: %s/%s", ing.Namespace, ing.Name)
+					glog.V(3).Infof(msg)
+					go c.TriggerUpdate(msg)
 				},
 				UpdateFunc: func(old, cur interface{}) {
-					go c.TriggerUpdate()
+					oldIng := old.(*v1beta1.Ingress)
+					ing := cur.(*v1beta1.Ingress)
+					if reflect.DeepEqual(oldIng, ing) {
+						glog.V(3).Infof("ignoring spurious update for ingress %s/%s",
+							ing.Namespace, ing.Name)
+						return
+					}
+					msg := fmt.Sprintf("ingress updated: %s/%s old: %+v new: %+v",
+						ing.Namespace, ing.Name, oldIng, ing)
+					glog.V(3).Infof(msg)
+					go c.TriggerUpdate(msg)
 				},
 				DeleteFunc: func(obj interface{}) {
-					go c.TriggerUpdate()
+					ing := obj.(*v1beta1.Ingress)
+					msg := fmt.Sprintf("ingress deleted: %s/%s", ing.Namespace, ing.Name)
+					glog.V(3).Infof(msg)
+					go c.TriggerUpdate(msg)
 				},
 			},
 		)
@@ -319,13 +335,29 @@ func (c *Config) Serve(stopCh chan struct{}) error {
 			30*time.Minute,
 			cache.ResourceEventHandlerFuncs{
 				AddFunc: func(obj interface{}) {
-					go c.TriggerUpdate()
+					svc := obj.(*v1.Service)
+					msg := fmt.Sprintf("service added: %s/%s", svc.Namespace, svc.Name)
+					glog.V(3).Infof(msg)
+					go c.TriggerUpdate(msg)
 				},
 				UpdateFunc: func(old, cur interface{}) {
-					go c.TriggerUpdate()
+					oldSvc := old.(*v1.Service)
+					svc := cur.(*v1.Service)
+					if reflect.DeepEqual(oldSvc, svc) {
+						glog.V(3).Infof("ignoring spurious update for service %s/%s",
+							svc.Namespace, svc.Name)
+						return
+					}
+					msg := fmt.Sprintf("service updated: %s/%s old: %+v new: %+v",
+						svc.Namespace, svc.Name, oldSvc, svc)
+					glog.V(3).Infof(msg)
+					go c.TriggerUpdate(msg)
 				},
 				DeleteFunc: func(obj interface{}) {
-					go c.TriggerUpdate()
+					svc := obj.(*v1.Service)
+					msg := fmt.Sprintf("service deleted: %s/%s", svc.Namespace, svc.Name)
+					glog.V(3).Infof(msg)
+					go c.TriggerUpdate(msg)
 				},
 			},
 		)
@@ -333,7 +365,7 @@ func (c *Config) Serve(stopCh chan struct{}) error {
 		go c.serviceController.Run(stopCh)
 		go c.ingressController.Run(stopCh)
 	}
-	c.TriggerUpdate()
+	c.TriggerUpdate("init")
 
 	go wait.Forever(func() {
 		c.Debug()
