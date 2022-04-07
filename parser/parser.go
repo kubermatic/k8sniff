@@ -82,6 +82,9 @@ func GetSNBlock(data []byte) ([]byte, error) {
 	}
 
 	extensionLength := (int(data[index]) << 8) + int(data[index+1])
+	if len(data) < extensionLength + 2 {
+		return []byte{}, fmt.Errorf("extension length too large for data block")
+	}
 	data = data[2 : extensionLength+2]
 
 	for {
@@ -95,6 +98,9 @@ func GetSNBlock(data []byte) ([]byte, error) {
 		// https://datatracker.ietf.org/doc/html/rfc5246#section-7.4.1.4
 		// https://datatracker.ietf.org/doc/html/rfc6066#section-3
 		if data[index] == 0x00 && data[index+1] == 0x00 {
+			if len(data) < endIndex {
+				return []byte{}, fmt.Errorf("server_name extension too large for data block")
+			}
 			return data[index+4 : endIndex], nil
 		}
 		index = endIndex
