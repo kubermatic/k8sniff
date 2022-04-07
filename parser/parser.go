@@ -81,19 +81,22 @@ func GetSNBlock(data []byte) ([]byte, error) {
 		return []byte{}, fmt.Errorf("Not enough bytes to be an SN block")
 	}
 
-	extensionLength := int((data[index] << 8) + data[index+1])
+	extensionLength := (int(data[index]) << 8) + int(data[index+1])
 	data = data[2 : extensionLength+2]
 
 	for {
-		if index >= len(data) {
+		if index + 3 >= len(data) {
 			break
 		}
-		length := int((data[index+2] << 8) + data[index+3])
+		length := (int(data[index+2]) << 8) + int(data[index+3])
 		endIndex := index + 4 + length
+		// Extension type is 16 bits. Value 0 corresponds to server_name
+		// Sources:
+		// https://datatracker.ietf.org/doc/html/rfc5246#section-7.4.1.4
+		// https://datatracker.ietf.org/doc/html/rfc6066#section-3
 		if data[index] == 0x00 && data[index+1] == 0x00 {
 			return data[index+4 : endIndex], nil
 		}
-
 		index = endIndex
 	}
 
