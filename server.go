@@ -22,7 +22,6 @@ package main
 
 import (
 	"fmt"
-	"github.com/platform9/cnxmd/pkg/cnxmd"
 	"io"
 	"math/rand"
 	"net"
@@ -32,10 +31,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/platform9/cnxmd/pkg/cnxmd"
+
 	"github.com/golang/glog"
 	"github.com/kubermatic/k8sniff/metrics"
 	"github.com/kubermatic/k8sniff/parser"
-	"k8s.io/api/core/v1"
+    "k8s.io/api/core/v1"
 	"k8s.io/api/extensions/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -451,7 +452,7 @@ func (p *Proxy) Handle(conn *net.TCPConn, connectionID string) {
 			connectionID, hostnameType, hostname, proxy.Host)
 	}
 	data = data[headerBytes:length]
-	proxyBackend := fmt.Sprintf("%s:%d", proxy.Host, proxy.Port)
+	proxyBackend := fmt.Sprintf("%s:%d", encloseIPv6(proxy.Host), proxy.Port)
 	clientCnx, err := net.Dial("tcp", proxyBackend)
 	if err != nil {
 		metrics.IncErrors(metrics.Error)
@@ -535,4 +536,25 @@ func RandomString(strlen int) string {
 		result[i] = chars[rand.Intn(len(chars))]
 	}
 	return string(result)
+}
+
+func encloseIPv6(ip string) string {
+	if isIPv6Addr(ip) {
+		return "[" + ip + "]"
+	} else {
+		return ip
+	}
+}
+
+func isIPv6Addr(host string) bool {
+	ip := net.ParseIP(host)
+	if ip == nil {
+		//Not a Valid V4 or V6 address, so likely a hostname
+		return false
+	}
+
+	if ip.To4() == nil {
+		return true
+	}
+	return false
 }
